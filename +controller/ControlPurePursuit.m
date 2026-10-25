@@ -103,10 +103,14 @@ classdef ControlPurePursuit < handle
             obj.To = T;
             %% -------------------- メインシミュレーションループ --------------------
             % 現在の車両状態を履歴に保存
-            vehicle_state = Est.pose';          % 車両の初期状態 [x(m), y(m), yaw(rad)]'
-            x = vehicle_state(1);
-            y = vehicle_state(2);
-            yaw = vehicle_state(6);
+            % vehicle_state = Est.pose';          % 車両の初期状態 [x(m), y(m), yaw(rad)]'
+            % x = vehicle_state(1);
+            % y = vehicle_state(2);
+            % yaw = vehicle_state(6);
+
+            x=0;
+            y=0;
+            yaw=0;
         
             % --- ウェイポイントの管理 ---
             % 全てのウェイポイントを通過した場合
