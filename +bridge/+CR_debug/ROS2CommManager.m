@@ -16,6 +16,8 @@ classdef ROS2CommManager < bridge.ROS2CommStrategy
             % Call obj.mode, obj.sensorIdx, obj.node
             obj@bridge.ROS2CommStrategy(cfg.vehicleInfo, mode, cfg.rosNamespace, cfg.RID);
             obj.vehicleColor = cfg.vehicleInfo.color;
+            % sensor(8)（LiDAR pose）を書いていない main でも動くように，足りない欄は false にする
+            obj.sensorIdx(end+1:8) = false;
             
             % センサデータの収集クラス
             obj.sensorFetcher = bridge.CR_debug.SensorFetcher(cfg);
@@ -24,11 +26,15 @@ classdef ROS2CommManager < bridge.ROS2CommStrategy
         %% 必須メソッドの定義
         function topics = getSensorTopics(obj)
             % Subscribeするセンサのトピックを定義
+            % 自己位置推定（ekf_localizer）の出力：
+            %   1 LiDAR       /localization/vlp16_points  8 の姿勢と同じ stamp で出し直した点群
+            %   5 Matching    /localization/base_pose     後輪間中心の姿勢（現在時刻まで予測した値，50 Hz）
+            %   8 LiDAR pose  /localization/vlp16_pose    点群の時刻の LiDAR の姿勢（NDT で更新した直後の値）
             switch obj.mode
                 case 2 % Gazebo (4番目のみ真値 /wheelchair/pose，他は実機と共通)
-                    topics = {'/velodyne_points','/ublox_gps_node/fix','/yolo/detections','/wheelchair/pose','/ekf_pose',[],'/localization_debug'};
+                    topics = {'/localization/vlp16_points','/ublox_gps_node/fix','/yolo/detections','/wheelchair/pose','/localization/base_pose',[],'/localization_debug','/localization/vlp16_pose'};
                 case 3 % Real Exp.
-                    topics = {'/velodyne_points','/ublox_gps_node/fix','/yolo/detections','/ekf_pose','/ekf_pose',[],'/localization_debug'};
+                    topics = {'/localization/vlp16_points','/ublox_gps_node/fix','/yolo/detections','/ekf_pose','/localization/base_pose',[],'/localization_debug','/localization/vlp16_pose'};
             end
         end
 
@@ -36,9 +42,9 @@ classdef ROS2CommManager < bridge.ROS2CommStrategy
             % Subscribeするセンサのメッセージ型を定義
             switch obj.mode
                 case 2
-                    types = {'sensor_msgs/PointCloud2','sensor_msgs/NavSatFix','yolo_msgs/YoloDetectionArray','geometry_msgs/Pose','geometry_msgs/PoseWithCovarianceStamped',[],'std_msgs/Float32MultiArray'};
+                    types = {'sensor_msgs/PointCloud2','sensor_msgs/NavSatFix','yolo_msgs/YoloDetectionArray','geometry_msgs/Pose','geometry_msgs/PoseWithCovarianceStamped',[],'std_msgs/Float32MultiArray','geometry_msgs/PoseWithCovarianceStamped'};
                 case 3
-                    types = {'sensor_msgs/PointCloud2','sensor_msgs/NavSatFix','yolo_msgs/YoloDetectionArray','geometry_msgs/PoseStamped','geometry_msgs/PoseWithCovarianceStamped',[],'std_msgs/Float32MultiArray'};
+                    types = {'sensor_msgs/PointCloud2','sensor_msgs/NavSatFix','yolo_msgs/YoloDetectionArray','geometry_msgs/PoseStamped','geometry_msgs/PoseWithCovarianceStamped',[],'std_msgs/Float32MultiArray','geometry_msgs/PoseWithCovarianceStamped'};
             end
         end
 

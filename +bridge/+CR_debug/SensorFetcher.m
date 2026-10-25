@@ -11,6 +11,8 @@ classdef SensorFetcher < handle
     properties (Access=private)
         prevAngle
         timeout = 0.05;
+        lidarPair       % stamp が同じ点群と LiDAR の姿勢の最新の組（struct: cloud, pose）
+        lastLidarStamp  % 前の周期に渡した点群の stamp [sec, nanosec]
 
     end
     properties (Constant)
@@ -21,6 +23,7 @@ classdef SensorFetcher < handle
         function obj = SensorFetcher(cfg)
             obj.mode = cfg.modeNumber;
             obj.sensorIdx = cfg.vehicleInfo.sensor;
+            obj.sensorIdx(end+1:8) = false; % sensor(8)（LiDAR pose）を書いていない main でも動くように
             obj.baseSensor = cfg.vehicleInfo.base_sensor;
             if obj.baseSensor == 0
                 obj.nostd = 1;
@@ -30,14 +33,18 @@ classdef SensorFetcher < handle
         function [data,Plant] = getSensorData(obj,sensorSubs,whillSubs)
             % subscriberからセンサ値を取得
             doProcessing = 0;
-            data = struct("LIDAR",[],"GNSS",[],"CAMERA",[],"IMU",[]);
+            % LIDAR_pose：LIDAR（点群）の時刻の LiDAR の姿勢（sensor(8)），LIDAR_new：前の周期と違う点群か
+            data = struct("LIDAR",[],"GNSS",[],"CAMERA",[],"IMU",[],"LIDAR_pose",[],"LIDAR_new",false);
             Plant = struct("X",[.0],"Y",[.0],"Z",[.0], ...
                 "Roll",[.0],"Pitch",[.0],"Yaw",[.0],"odom",[0, 0, 0, 0],"info",[]);
             if obj.mode == 1
                 return;
             end
             if ~obj.sensorIdx(1) && (obj.sensorIdx(4)||obj.sensorIdx(5)) && obj.mode >= 2
-                error("Localizer need to LiDAR. Please confirm LiDAR's sensor-index is true.")   
+                error("Localizer need to LiDAR. Please confirm LiDAR's sensor-index is true.")
+            end
+            if obj.sensorIdx(8) && ~obj.sensorIdx(1)
+                error("LiDAR pose (sensor 8) is paired with the LiDAR point cloud. Please confirm LiDAR's sensor-index is true.")
             end
             tStart = tic;
             ret = cell(size(sensorSubs));
@@ -60,6 +67,9 @@ classdef SensorFetcher < handle
                 end
                 if ~isempty(sensorSubs{7})
                     ret{7} = sensorSubs{7}.LatestMessage;
+                end
+                if numel(sensorSubs) >= 8 && ~isempty(sensorSubs{8})
+                    ret{8} = sensorSubs{8}.LatestMessage;
                 end
                 if obj.nostd || ~isempty(ret{obj.baseSensor})
                     break;
@@ -85,7 +95,22 @@ classdef SensorFetcher < handle
 
             
             if obj.sensorIdx(1) && ~isempty(ret{1})
-                data.LIDAR = ret{1};
+                if obj.sensorIdx(8)
+                    % 点群とその時刻の LiDAR の姿勢を stamp で組にする．2 つは続けて配信されるが届く順は
+                    % 入れ替わることがあるので，stamp が同じときだけ組を新しくし，違うときは前の組を使う
+                    if ~isempty(ret{8}) && isequal(obj.stampOf(ret{1}), obj.stampOf(ret{8}))
+                        obj.lidarPair = struct("cloud",ret{1},"pose",ret{8});
+                    end
+                    if ~isempty(obj.lidarPair)
+                        stamp = obj.stampOf(obj.lidarPair.cloud);
+                        data.LIDAR = obj.lidarPair.cloud;
+                        data.LIDAR_pose = obj.poseOf(obj.lidarPair.pose);
+                        data.LIDAR_new = ~isequal(stamp, obj.lastLidarStamp);
+                        obj.lastLidarStamp = stamp;
+                    end
+                else
+                    data.LIDAR = ret{1};
+                end
             end
             if obj.sensorIdx(2) && ~isempty(ret{2})
                 data.GNSS = ret{2};
@@ -111,7 +136,7 @@ classdef SensorFetcher < handle
                     ang(2) = ret{4}.pose.orientation.x;
                     ang(3) = ret{4}.pose.orientation.y;
                     ang(4) = ret{4}.pose.orientation.z;
-                elseif obj.sensorIdx(5) % Matching
+                elseif obj.sensorIdx(5) % Matching（/localization/base_pose：後輪間中心を現在時刻まで予測した値）
                     Plant.X = ret{5}.pose.pose.position.x;
                     Plant.Y = ret{5}.pose.pose.position.y;
                     Plant.Z = ret{5}.pose.pose.position.z;
@@ -232,7 +257,23 @@ classdef SensorFetcher < handle
                    ret.Yaw = ret.Yaw + 2 * pi;
                 end
             end
-            
+
+        end
+    end
+    methods (Static, Access=private)
+        function s = stampOf(msg)
+            % header.stamp を [sec, nanosec] にする（点群と姿勢の組を比べる）
+            s = [double(msg.header.stamp.sec), double(msg.header.stamp.nanosec)];
+        end
+
+        function pose = poseOf(msg)
+            % PoseWithCovarianceStamped を X, Y, Z, Roll, Pitch, Yaw，共分散（6x6），stamp [s] にする
+            p = msg.pose.pose;
+            eul = quat2eul([p.orientation.w, p.orientation.x, p.orientation.y, p.orientation.z],"ZYX");
+            pose = struct("X",p.position.x,"Y",p.position.y,"Z",p.position.z, ...
+                "Roll",eul(3),"Pitch",eul(2),"Yaw",eul(1), ...
+                "Cov",reshape(double(msg.pose.covariance),6,6)', ...
+                "Stamp",double(msg.header.stamp.sec) + double(msg.header.stamp.nanosec)*1e-9);
         end
     end
 end
