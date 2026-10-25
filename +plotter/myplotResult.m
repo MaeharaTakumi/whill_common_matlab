@@ -5,6 +5,7 @@ function  myplotResult(DATAdir,cfg)
     %     2026-10-26 より前の記録は /ekf_pose（LiDAR の姿勢）
     %   LIDAR_pose（sensor(8)）：/localization/vlp16_pose の点群の時刻の LiDAR の姿勢（新しい組を受け取った周期だけ．
     %     横軸は受け取った周期の時刻）
+    %   LiDAR_age：受け取った直後の ROS の時刻（data.Now）と使った点群の stamp の差（点群の古さ）
     % 線は後に描くほど細くし，点線・破線は使わない．枠は 4 辺とも黒
     %% Settings
     % warning('off','all');
@@ -120,6 +121,25 @@ function  myplotResult(DATAdir,cfg)
         ylabel('Interval between new LiDAR pairs [ms]')
         xlim(T([1,end],:)')
         saveFigure('LiDAR_pair_interval', Outputdir)
+    end
+
+    % 点群の古さ：受け取った直後の ROS の時刻（data.Now）− 使った点群の stamp（周期ごと．新しい組を受け取った周期は点）
+    hasAge = cellfun(@(r) isfield(r,'Now') && ~isempty(r.Now) && ~isempty(r.LIDAR), raw);
+    if any(hasAge)
+        C = palette();
+        Ta = T(hasAge);
+        age = cellfun(@(r) r.Now - (double(r.LIDAR.header.stamp.sec) + double(r.LIDAR.header.stamp.nanosec)*1e-9), ...
+            raw(hasAge)) * 1e3;
+        isNew = cellfun(@(r) isfield(r,'LIDAR_new') && r.LIDAR_new, raw(hasAge));
+        newFigure();
+        plot(Ta, age, '-', 'Color', C(1,:), 'LineWidth', 1.6);
+        plot(Ta(isNew), age(isNew), 'o', 'Color', C(2,:), 'MarkerFaceColor', C(2,:), 'MarkerSize', 3);
+        xlabel('Time [s]')
+        ylabel('Current time - point cloud stamp [ms]')
+        xlim(T([1,end],:)')
+        legend(sprintf('Every cycle (mean %.0f ms)', mean(age)), ...
+            sprintf('New pair received (mean %.0f ms)', mean(age(isNew))), 'Location', 'best')
+        saveFigure('LiDAR_age', Outputdir)
     end
 end
 

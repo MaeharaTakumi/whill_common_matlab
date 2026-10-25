@@ -8,6 +8,7 @@ classdef ROS2CommManager < bridge.ROS2CommStrategy
     end
     properties
         vehicleColor
+        useSimTime  % ROS の時刻を /clock にするか（Gazebo と録画の再生）
 
     end
 
@@ -18,11 +19,24 @@ classdef ROS2CommManager < bridge.ROS2CommStrategy
             obj.vehicleColor = cfg.vehicleInfo.color;
             % sensor(8)（LiDAR pose）を書いていない main でも動くように，足りない欄は false にする
             obj.sensorIdx(end+1:8) = false;
+            % Gazebo（mode 2）と録画の再生（cfg.useSimTime）は，ROS の時刻を /clock にする（data.Now に使う）
+            obj.useSimTime = mode == 2 || (isfield(cfg,'useSimTime') && cfg.useSimTime);
+            if obj.useSimTime
+                setParameter(obj.node, "use_sim_time", true);
+            end
             
             % センサデータの収集クラス
             obj.sensorFetcher = bridge.CR_debug.SensorFetcher(cfg);
         end
         
+        function [sensorData, Plant] = getSensorData(obj)
+            % 受け取ったデータに，受け取った直後の ROS の時刻 data.Now [s] を付ける
+            % （Gazebo・録画の再生は /clock，実機はこの PC の時刻．点群の stamp との差が点群の古さ）
+            [sensorData, Plant] = getSensorData@bridge.ROS2CommStrategy(obj);
+            t = ros2time(obj.node, "now");
+            sensorData.Now = double(t.sec) + double(t.nanosec)*1e-9;
+        end
+
         %% 必須メソッドの定義
         function topics = getSensorTopics(obj)
             % Subscribeするセンサのトピックを定義

@@ -3,7 +3,7 @@ function myplotPointCloudVideo(DATAdir, MAPfile)
     %   DATAdir : userLocal.mat, userLocal_tmp.mat があるフォルダ
     %   MAPfile : 点群地図（.pcd）．空か無いファイルなら地図を描かない
     % 点群は，同じ stamp の LiDAR の姿勢（data.LIDAR_pose，/localization/vlp16_pose）で地図座標系に直す．
-    % 自己位置の矢印と軌跡は Plant（/localization/base_pose，後輪間中心）．LIDAR_pose の無い古い記録は，
+    % 車両中心（後輪間中心，黒い点），向きの矢印と軌跡は Plant（/localization/base_pose）．LIDAR_pose の無い古い記録は，
     % Plant（/ekf_pose，LiDAR の姿勢）で点群を直す（点群と姿勢の時刻はそろっていない）．
     % 実験データの myplotPointCloudVideo.m（ndt/20261016）を元にした
     %% Settings
@@ -67,8 +67,10 @@ function myplotPointCloudVideo(DATAdir, MAPfile)
         return
     end
     if hasLidarPose
-        poseName = 'Rear axle center';
+        trajName = 'Trajectory (vehicle center)';
+        poseName = 'Heading';
     else
+        trajName = 'Trajectory';
         poseName = 'Pose';
     end
 
@@ -108,11 +110,12 @@ function myplotPointCloudVideo(DATAdir, MAPfile)
     p_scan   = scatter(ax, NaN, NaN, 4, C(2,:), 'filled');
     p_lidar  = plot(ax, NaN, NaN, 'o', 'Color', C(3,:), 'MarkerFaceColor', C(3,:), 'MarkerSize', 7);
     p_robot  = quiver(ax, NaN, NaN, NaN, NaN, 0, 'Color', 'k', 'LineWidth', 3, 'MaxHeadSize', 2);
+    p_center = plot(ax, NaN, NaN, 'o', 'Color', 'k', 'MarkerFaceColor', 'k', 'MarkerSize', 9);
     time     = text(ax, 0.02, 0.96, '', 'Units', 'normalized', 'FontSize', 20, 'Interpreter', 'Latex', ...
                     'BackgroundColor', [1 1 1], 'EdgeColor', [0 0 0], 'VerticalAlignment', 'top');
-    handles = [p_map, p_scan, p_traj, p_robot, p_lidar];
-    names = {'Map', 'Scan', 'Trajectory', poseName, 'LiDAR (scan stamp)'};
-    show = [~isempty(mapPt), true, true, true, hasLidarPose];
+    handles = [p_map, p_scan, p_traj, p_center, p_robot, p_lidar];
+    names = {'Map', 'Scan', trajName, 'Vehicle center (rear axle)', poseName, 'LiDAR (scan stamp)'};
+    show = [~isempty(mapPt), true, true, hasLidarPose, true, hasLidarPose];
     legend(ax, handles(show), names(show), 'Location', 'northeast', 'FontSize', 14);
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     set(ax,'FontSize',20,'FontName','Times');
@@ -156,6 +159,9 @@ function myplotPointCloudVideo(DATAdir, MAPfile)
         set(p_traj, 'XData', base(drawn,1), 'YData', base(drawn,2));
         set(p_robot, 'XData', pose(1), 'YData', pose(2), ...
                      'UData', arrowLen*cos(pose(6)), 'VData', arrowLen*sin(pose(6)));
+        if hasLidarPose   % 車両中心（後輪間中心．古い記録の Plant は LiDAR なので描かない）
+            set(p_center, 'XData', pose(1), 'YData', pose(2));
+        end
 
         ax.XLim = pose(1) + [-1 1]*viewHalf(1);
         ax.YLim = pose(2) + [-1 1]*viewHalf(2);

@@ -34,8 +34,9 @@ classdef SensorFetcher < handle
             % subscriberからセンサ値を取得
             doProcessing = 0;
             % LIDAR_pose：LIDAR（点群）の時刻の LiDAR の姿勢（sensor(8)），LIDAR_new：前の周期と違う点群か，
-            % NDT_info：/localization_debug（sensor(7)）。どの周期も同じフィールドにする（記録を cat で並べられるように）
-            data = struct("LIDAR",[],"GNSS",[],"CAMERA",[],"IMU",[],"LIDAR_pose",[],"LIDAR_new",false,"NDT_info",[]);
+            % NDT_info：/localization_debug（sensor(7)），Now：受け取った直後の ROS の時刻（ROS2CommManager が入れる）。
+            % どの周期も同じフィールドにする（記録を cat で並べられるように）
+            data = struct("LIDAR",[],"GNSS",[],"CAMERA",[],"IMU",[],"LIDAR_pose",[],"LIDAR_new",false,"NDT_info",[],"Now",[]);
             Plant = struct("X",[.0],"Y",[.0],"Z",[.0], ...
                 "Roll",[.0],"Pitch",[.0],"Yaw",[.0],"odom",[0, 0, 0, 0],"info",[]);
             if obj.mode == 1
