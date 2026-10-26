@@ -11,8 +11,10 @@ classdef SensorFetcher < handle
     properties (Access=private)
         prevAngle
         timeout = 0.05;
-        lidarPair       % stamp が同じ点群と LiDAR の姿勢の最新の組（struct: cloud, pose）
+        lidarPair       % 点群と，その stamp の時刻の LiDAR の姿勢の最新の組（struct: cloud, pose）
         lastLidarStamp  % 前の周期に渡した点群の stamp [sec, nanosec]
+        tftree          % ros2tf（/tf・/tf_static を溜める．ROS2CommManager が setTfTree で渡す）
+        frames          % TF のフレーム名（struct: map, base, lidar）
 
     end
     properties (Constant)
@@ -30,13 +32,21 @@ classdef SensorFetcher < handle
             end
         end
 
+        function setTfTree(obj, tftree, frames)
+            % 後輪間中心（sensor(5)）と点群の時刻の LiDAR の姿勢（sensor(8)）を引く TF の木とフレーム名
+            obj.tftree = tftree;
+            obj.frames = frames;
+        end
+
         function [data,Plant] = getSensorData(obj,sensorSubs,whillSubs)
             % subscriberからセンサ値を取得
             doProcessing = 0;
-            % LIDAR_pose：LIDAR（点群）の時刻の LiDAR の姿勢（sensor(8)），LIDAR_new：前の周期と違う点群か，
+            % LIDAR_pose：LIDAR（点群）の stamp の時刻の LiDAR の姿勢（sensor(8)．/tf を引く），LIDAR_new：前の周期と違う点群か，
+            % LIDAR_waiting：最新の点群の stamp の時刻の TF がまだ無く，前の組のままにしたか（次の周期に引き直す），
             % NDT_info：/localization_debug（sensor(7)），Now：受け取った直後の ROS の時刻（ROS2CommManager が入れる）。
             % どの周期も同じフィールドにする（記録を cat で並べられるように）
-            data = struct("LIDAR",[],"GNSS",[],"CAMERA",[],"IMU",[],"LIDAR_pose",[],"LIDAR_new",false,"NDT_info",[],"Now",[]);
+            data = struct("LIDAR",[],"GNSS",[],"CAMERA",[],"IMU",[],"LIDAR_pose",[],"LIDAR_new",false, ...
+                "LIDAR_waiting",false,"NDT_info",[],"Now",[]);
             Plant = struct("X",[.0],"Y",[.0],"Z",[.0], ...
                 "Roll",[.0],"Pitch",[.0],"Yaw",[.0],"odom",[0, 0, 0, 0],"info",[]);
             if obj.mode == 1
@@ -47,6 +57,9 @@ classdef SensorFetcher < handle
             end
             if obj.sensorIdx(8) && ~obj.sensorIdx(1)
                 error("LiDAR pose (sensor 8) is paired with the LiDAR point cloud. Please confirm LiDAR's sensor-index is true.")
+            end
+            if (obj.sensorIdx(5) || obj.sensorIdx(8)) && isempty(obj.tftree)
+                error("Matching (sensor 5) and LiDAR pose (sensor 8) read /tf. Please call setTfTree.")
             end
             tStart = tic;
             ret = cell(size(sensorSubs));
@@ -69,9 +82,6 @@ classdef SensorFetcher < handle
                 end
                 if ~isempty(sensorSubs{7})
                     ret{7} = sensorSubs{7}.LatestMessage;
-                end
-                if numel(sensorSubs) >= 8 && ~isempty(sensorSubs{8})
-                    ret{8} = sensorSubs{8}.LatestMessage;
                 end
                 if obj.nostd || ~isempty(ret{obj.baseSensor})
                     break;
@@ -98,15 +108,21 @@ classdef SensorFetcher < handle
             
             if obj.sensorIdx(1) && ~isempty(ret{1})
                 if obj.sensorIdx(8)
-                    % 点群とその時刻の LiDAR の姿勢を stamp で組にする．2 つは続けて配信されるが届く順は
-                    % 入れ替わることがあるので，stamp が同じときだけ組を新しくし，違うときは前の組を使う
-                    if ~isempty(ret{8}) && isequal(obj.stampOf(ret{1}), obj.stampOf(ret{8}))
-                        obj.lidarPair = struct("cloud",ret{1},"pose",ret{8});
+                    % 点群の stamp の時刻の map → LiDAR を /tf（ekf_localizer の周期ごとの予測値を補間）と
+                    % /tf_static（取付）から引いて組にする．その時刻より後の TF がまだ届いていなければ待たずに前の組を使い，
+                    % 次の周期にその時点の最新の点群で引き直す
+                    if isempty(obj.lidarPair) || ~isequal(obj.stampOf(ret{1}), obj.stampOf(obj.lidarPair.cloud))
+                        tf = obj.lookup(obj.frames.lidar, ret{1}.header.stamp);
+                        if isempty(tf)
+                            data.LIDAR_waiting = true;
+                        else
+                            obj.lidarPair = struct("cloud",ret{1},"pose",obj.poseOf(tf));
+                        end
                     end
                     if ~isempty(obj.lidarPair)
                         stamp = obj.stampOf(obj.lidarPair.cloud);
                         data.LIDAR = obj.lidarPair.cloud;
-                        data.LIDAR_pose = obj.poseOf(obj.lidarPair.pose);
+                        data.LIDAR_pose = obj.lidarPair.pose;
                         data.LIDAR_new = ~isequal(stamp, obj.lastLidarStamp);
                         obj.lastLidarStamp = stamp;
                     end
@@ -120,6 +136,10 @@ classdef SensorFetcher < handle
             if obj.sensorIdx(3) && ~isempty(ret{3}) && numel(ret{3}.detections) ~= 0
                 data.CAMERA = ret{3};
                 doProcessing = 1;
+            end
+            if obj.sensorIdx(5) && ~obj.sensorIdx(4)
+                % 後輪間中心：最新の map → base（ekf_localizer が周期ごとに現在時刻まで予測した値）
+                ret{5} = obj.lookup(obj.frames.base);
             end
             if (obj.sensorIdx(4)|| obj.sensorIdx(5)) && (~isempty(ret{4}) || ~isempty(ret{5}))
                 if obj.mode==2 && obj.sensorIdx(4) % Gazebo真値 (/wheelchair/pose, geometry_msgs/Pose)
@@ -138,14 +158,14 @@ classdef SensorFetcher < handle
                     ang(2) = ret{4}.pose.orientation.x;
                     ang(3) = ret{4}.pose.orientation.y;
                     ang(4) = ret{4}.pose.orientation.z;
-                elseif obj.sensorIdx(5) % Matching（/localization/base_pose：後輪間中心を現在時刻まで予測した値）
-                    Plant.X = ret{5}.pose.pose.position.x;
-                    Plant.Y = ret{5}.pose.pose.position.y;
-                    Plant.Z = ret{5}.pose.pose.position.z;
-                    ang(1) = ret{5}.pose.pose.orientation.w;
-                    ang(2) = ret{5}.pose.pose.orientation.x;
-                    ang(3) = ret{5}.pose.pose.orientation.y;
-                    ang(4) = ret{5}.pose.pose.orientation.z;
+                elseif obj.sensorIdx(5) % Matching（最新の /tf map → base：後輪間中心を現在時刻まで予測した値）
+                    Plant.X = ret{5}.transform.translation.x;
+                    Plant.Y = ret{5}.transform.translation.y;
+                    Plant.Z = ret{5}.transform.translation.z;
+                    ang(1) = ret{5}.transform.rotation.w;
+                    ang(2) = ret{5}.transform.rotation.x;
+                    ang(3) = ret{5}.transform.rotation.y;
+                    ang(4) = ret{5}.transform.rotation.z;
                     if obj.sensorIdx(7) && ~isempty(ret{7})
                         % Plant.info.downsampled_points = ret{7}.data(1);
                         % Plant.info.matching_time = ret{7}.data(2);
@@ -262,20 +282,36 @@ classdef SensorFetcher < handle
 
         end
     end
+    methods (Access=private)
+        function tf = lookup(obj, frame, stamp)
+            % map → frame の TF（TransformStamped）．stamp を省くと最新．まだ引けなければ []（待たない）
+            tf = [];
+            try
+                if nargin < 3
+                    if canTransform(obj.tftree, obj.frames.map, frame)
+                        tf = getTransform(obj.tftree, obj.frames.map, frame);
+                    end
+                elseif canTransform(obj.tftree, obj.frames.map, frame, stamp)
+                    tf = getTransform(obj.tftree, obj.frames.map, frame, stamp);
+                end
+            catch
+                tf = [];
+            end
+        end
+    end
     methods (Static, Access=private)
         function s = stampOf(msg)
             % header.stamp を [sec, nanosec] にする（点群と姿勢の組を比べる）
             s = [double(msg.header.stamp.sec), double(msg.header.stamp.nanosec)];
         end
 
-        function pose = poseOf(msg)
-            % PoseWithCovarianceStamped を X, Y, Z, Roll, Pitch, Yaw，共分散（6x6），stamp [s] にする
-            p = msg.pose.pose;
-            eul = quat2eul([p.orientation.w, p.orientation.x, p.orientation.y, p.orientation.z],"ZYX");
-            pose = struct("X",p.position.x,"Y",p.position.y,"Z",p.position.z, ...
-                "Roll",eul(3),"Pitch",eul(2),"Yaw",eul(1), ...
-                "Cov",reshape(double(msg.pose.covariance),6,6)', ...
-                "Stamp",double(msg.header.stamp.sec) + double(msg.header.stamp.nanosec)*1e-9);
+        function pose = poseOf(tf)
+            % TransformStamped（map → フレーム）を X, Y, Z, Roll, Pitch, Yaw，stamp [s] にする
+            t = tf.transform.translation;
+            q = tf.transform.rotation;
+            eul = quat2eul([q.w, q.x, q.y, q.z],"ZYX");
+            pose = struct("X",t.x,"Y",t.y,"Z",t.z,"Roll",eul(3),"Pitch",eul(2),"Yaw",eul(1), ...
+                "Stamp",double(tf.header.stamp.sec) + double(tf.header.stamp.nanosec)*1e-9);
         end
     end
 end

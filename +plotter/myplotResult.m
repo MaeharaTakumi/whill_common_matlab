@@ -1,10 +1,10 @@
 function  myplotResult(DATAdir,cfg)
     % 自己位置推定（CR_debug）の記録を描く
     %   NDT の情報（/localization_debug，sensor(7)）：位置合わせの時間・angle_diff（受け取った周期だけ）
-    %   Plant（Matching，sensor(5)）：/localization/base_pose の後輪間中心の姿勢（周期ごと．現在時刻まで予測した値）．
-    %     2026-10-26 より前の記録は /ekf_pose（LiDAR の姿勢）
-    %   LIDAR_pose（sensor(8)）：/localization/vlp16_pose の点群の時刻の LiDAR の姿勢（新しい組を受け取った周期だけ．
-    %     横軸は受け取った周期の時刻）
+    %   Plant（Matching，sensor(5)）：後輪間中心の姿勢（周期ごと．最新の /tf map → base，現在時刻まで予測した値）．
+    %     2026-10-26 の 62 より前の記録は /ekf_pose（LiDAR の姿勢），68 より前は /localization/base_pose
+    %   LIDAR_pose（sensor(8)）：点群の stamp の時刻の LiDAR の姿勢（新しい組を作った周期だけ．横軸はその周期の時刻）．
+    %     /tf を点群の stamp で引いた予測値（68 より前の記録は /localization/vlp16_pose の NDT で更新した直後の値）
     %   LiDAR_age：受け取った直後の ROS の時刻（data.Now）と使った点群の stamp の差（点群の古さ）
     % 線は後に描くほど細くし，点線・破線は使わない．枠は 4 辺とも黒
     %% Settings
