@@ -119,7 +119,7 @@ function  myplotResult(DATAdir,cfg)
         plot(Tl(2:end), diff(stampL)*1e3, '-', 'Color', C(2,:), 'LineWidth', 1.6);
         xlabel('Time [s]')
         ylabel('Interval between new LiDAR pairs [ms]')
-        xlim(T([1,end],:)')
+        timeLim(T)
         saveFigure('LiDAR_pair_interval', Outputdir)
     end
 
@@ -136,7 +136,7 @@ function  myplotResult(DATAdir,cfg)
         plot(Ta(isNew), age(isNew), 'o', 'Color', C(2,:), 'MarkerFaceColor', C(2,:), 'MarkerSize', 3);
         xlabel('Time [s]')
         ylabel('Current time - point cloud stamp [ms]')
-        xlim(T([1,end],:)')
+        timeLim(T)
         legend(sprintf('Every cycle (mean %.0f ms)', mean(age)), ...
             sprintf('New pair received (mean %.0f ms)', mean(age(isNew))), 'Location', 'best')
         saveFigure('LiDAR_age', Outputdir)
@@ -157,6 +157,13 @@ function ax = newFigure()
     ax.YColor = 'k';
 end
 
+function timeLim(T)
+    % 横軸を最初から最後の時刻にする．点が 1 つしかない（新しい組が 1 つだけなど）と範囲が作れないので，そのときは自動のまま
+    if numel(T) >= 2 && T(end) > T(1)
+        xlim([T(1), T(end)])
+    end
+end
+
 function plotWithAverage(T, data, name, yName)
     C = palette();
     newFigure();
@@ -164,7 +171,7 @@ function plotWithAverage(T, data, name, yName)
     [~, av] = plot_average(T, data);
     xlabel('Time [s]')
     ylabel(yName)
-    xlim(T([1,end],:)')
+    timeLim(T)
     legend(name, sprintf('Average %.3g', av), 'Location', 'best')
 end
 
@@ -181,7 +188,7 @@ function plotPosition(T, s, name)
     ax.YAxis(1).Color = 'k';
     ax.YAxis(2).Color = 'k';
     xlabel('Time [s]')
-    xlim(T([1,end],:)')
+    timeLim(T)
     title(name)
     legend('X','Y','Z')
 end
@@ -199,7 +206,7 @@ function plotAngle(T, s, name)
     ax.YAxis(1).Color = 'k';
     ax.YAxis(2).Color = 'k';
     xlabel('Time [s]')
-    xlim(T([1,end],:)')
+    timeLim(T)
     title(name)
     legend('Roll','Pitch','Yaw')
 end
