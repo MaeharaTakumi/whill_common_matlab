@@ -159,9 +159,9 @@ function myplotPointCloudVideo(DATAdir, MAPfile)
         set(p_traj, 'XData', base(drawn,1), 'YData', base(drawn,2));
         set(p_robot, 'XData', pose(1), 'YData', pose(2), ...
                      'UData', arrowLen*cos(pose(6)), 'VData', arrowLen*sin(pose(6)));
-        if hasLidarPose   % 車両中心（後輪間中心．古い記録の Plant は LiDAR なので描かない）
+        % if hasLidarPose   % 車両中心（後輪間中心．古い記録の Plant は LiDAR なので描かない）
             set(p_center, 'XData', pose(1), 'YData', pose(2));
-        end
+        % end
 
         ax.XLim = pose(1) + [-1 1]*viewHalf(1);
         ax.YLim = pose(2) + [-1 1]*viewHalf(2);
