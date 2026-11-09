@@ -18,8 +18,6 @@ classdef ROS2CommManager < bridge.ROS2CommStrategy
             % Call obj.mode, obj.sensorIdx, obj.node
             obj@bridge.ROS2CommStrategy(cfg.vehicleInfo, mode, cfg.rosNamespace, cfg.RID);
             obj.vehicleColor = cfg.vehicleInfo.color;
-            % sensor(8)（LiDAR pose）を書いていない main でも動くように，足りない欄は false にする
-            obj.sensorIdx(end+1:8) = false;
             % Gazebo（mode 2）と録画の再生（cfg.useSimTime）は，ROS の時刻を /clock にする（data.Now に使う）
             obj.useSimTime = mode == 2 || (isfield(cfg,'useSimTime') && cfg.useSimTime);
             if obj.useSimTime
@@ -28,15 +26,15 @@ classdef ROS2CommManager < bridge.ROS2CommStrategy
             
             % センサデータの収集クラス
             obj.sensorFetcher = bridge.CR_debug.SensorFetcher(cfg);
-            % 後輪間中心（sensor(5)）と点群の時刻の LiDAR の姿勢（sensor(8)）は ekf_localizer の /tf（map → base，
+            % sensor(5) の後輪間中心（最新）と点群の時刻の LiDAR の姿勢は ekf_localizer の /tf（map → base，
             % 50 Hz の予測値）と取付の /tf_static から引く。base は Gazebo（mode 2）が base_footprint，実機が base_link
-            if obj.sensorIdx(5) || obj.sensorIdx(8)
+            if obj.sensorIdx(5)
                 obj.tftree = ros2tf(obj.node);
                 frames = struct("map","map","base","base_link","lidar","velodyne");
                 if mode == 2
                     frames.base = "base_footprint";
                 end
-                obj.sensorFetcher.setTfTree(obj.tftree, frames);
+                obj.sensorFetcher.setTfTree(obj.tftree, frames, obj.node);
             end
         end
         
@@ -52,13 +50,13 @@ classdef ROS2CommManager < bridge.ROS2CommStrategy
         function topics = getSensorTopics(obj)
             % Subscribeするセンサのトピックを定義
             %   1 LiDAR       /velodyne_points  点群（そのまま）
-            %   5 Matching    （トピックなし）   後輪間中心の姿勢：最新の /tf map → base（ekf_localizer の 50 Hz の予測値）
-            %   8 LiDAR pose  （トピックなし）   点群の stamp の時刻の map → velodyne（/tf を補間し /tf_static の取付を掛ける）
+            %   5 Matching    （トピックなし）   Plant：最新の /tf map → base（後輪間中心．ekf_localizer の 50 Hz の予測値），
+            %                                    data.LIDAR_pose：点群の stamp の時刻の map → velodyne（/tf を補間し /tf_static の取付を掛ける）
             switch obj.mode
                 case 2 % Gazebo (4番目のみ真値 /wheelchair/pose，他は実機と共通)
-                    topics = {'/velodyne_points','/ublox_gps_node/fix','/yolo/detections','/wheelchair/pose',[],[],'/localization_debug',[]};
+                    topics = {'/velodyne_points','/ublox_gps_node/fix','/yolo/detections','/wheelchair/pose',[],[],'/localization_debug'};
                 case 3 % Real Exp.
-                    topics = {'/velodyne_points','/ublox_gps_node/fix','/yolo/detections','/ekf_pose',[],[],'/localization_debug',[]};
+                    topics = {'/velodyne_points','/ublox_gps_node/fix','/yolo/detections',[],[],[],'/localization_debug'};
             end
         end
 
@@ -66,9 +64,9 @@ classdef ROS2CommManager < bridge.ROS2CommStrategy
             % Subscribeするセンサのメッセージ型を定義
             switch obj.mode
                 case 2
-                    types = {'sensor_msgs/PointCloud2','sensor_msgs/NavSatFix','yolo_msgs/YoloDetectionArray','geometry_msgs/Pose',[],[],'std_msgs/Float32MultiArray',[]};
+                    types = {'sensor_msgs/PointCloud2','sensor_msgs/NavSatFix','yolo_msgs/YoloDetectionArray','geometry_msgs/Pose',[],[],'std_msgs/Float32MultiArray'};
                 case 3
-                    types = {'sensor_msgs/PointCloud2','sensor_msgs/NavSatFix','yolo_msgs/YoloDetectionArray','geometry_msgs/PoseStamped',[],[],'std_msgs/Float32MultiArray',[]};
+                    types = {'sensor_msgs/PointCloud2','sensor_msgs/NavSatFix','yolo_msgs/YoloDetectionArray',[],[],[],'std_msgs/Float32MultiArray'};
             end
         end
 

@@ -6,6 +6,7 @@ classdef SensorFetcher < handle
         sensorIdx
         baseSensor
         nostd = 0;
+        lidarStampThreshold = 0.1; % [s] 今の時刻と点群の stamp の差がこれ以上なら，点群の stamp の TF を引かず最新の TF を使う
 
     end
     properties (Access=private)
@@ -15,6 +16,7 @@ classdef SensorFetcher < handle
         lastLidarStamp  % 前の周期に渡した点群の stamp [sec, nanosec]
         tftree          % ros2tf（/tf・/tf_static を溜める．ROS2CommManager が setTfTree で渡す）
         frames          % TF のフレーム名（struct: map, base, lidar）
+        node            % 今の時刻（ros2time）を取る ROS のノード
 
     end
     properties (Constant)
@@ -25,28 +27,32 @@ classdef SensorFetcher < handle
         function obj = SensorFetcher(cfg)
             obj.mode = cfg.modeNumber;
             obj.sensorIdx = cfg.vehicleInfo.sensor;
-            obj.sensorIdx(end+1:8) = false; % sensor(8)（LiDAR pose）を書いていない main でも動くように
+            if isfield(cfg,'lidarStampThreshold')
+                obj.lidarStampThreshold = cfg.lidarStampThreshold;
+            end
             obj.baseSensor = cfg.vehicleInfo.base_sensor;
             if obj.baseSensor == 0
                 obj.nostd = 1;
             end
         end
 
-        function setTfTree(obj, tftree, frames)
-            % 後輪間中心（sensor(5)）と点群の時刻の LiDAR の姿勢（sensor(8)）を引く TF の木とフレーム名
+        function setTfTree(obj, tftree, frames, node)
+            % sensor(5) の後輪間中心と LiDAR の姿勢を引く TF の木，フレーム名，今の時刻を取るノード
             obj.tftree = tftree;
             obj.frames = frames;
+            obj.node = node;
         end
 
         function [data,Plant] = getSensorData(obj,sensorSubs,whillSubs)
             % subscriberからセンサ値を取得
             doProcessing = 0;
-            % LIDAR_pose：LIDAR（点群）の stamp の時刻の LiDAR の姿勢（sensor(8)．/tf を引く），LIDAR_new：前の周期と違う点群か，
-            % LIDAR_waiting：最新の点群の stamp の時刻の TF がまだ無く，前の組のままにしたか（次の周期に引き直す），
+            % LIDAR_pose：LIDAR（点群）の stamp の時刻の LiDAR の姿勢（sensor(5)．/tf を引く），LIDAR_new：前の周期と違う点群か，
+            % LIDAR_latest_tf：新しい点群の stamp の時刻の TF が引けないか，今の時刻と点群の stamp の差がしきい値以上で，最新の TF で組にしたか，
+            % LIDAR_waiting：TF が 1 つも引けず，前の組のままにしたか，
             % NDT_info：/localization_debug（sensor(7)），Now：受け取った直後の ROS の時刻（ROS2CommManager が入れる）。
             % どの周期も同じフィールドにする（記録を cat で並べられるように）
             data = struct("LIDAR",[],"GNSS",[],"CAMERA",[],"IMU",[],"LIDAR_pose",[],"LIDAR_new",false, ...
-                "LIDAR_waiting",false,"NDT_info",[],"Now",[]);
+                "LIDAR_latest_tf",false,"LIDAR_waiting",false,"NDT_info",[],"Now",[]);
             Plant = struct("X",[.0],"Y",[.0],"Z",[.0], ...
                 "Roll",[.0],"Pitch",[.0],"Yaw",[.0],"odom",[0, 0, 0, 0],"info",[]);
             if obj.mode == 1
@@ -55,11 +61,11 @@ classdef SensorFetcher < handle
             if ~obj.sensorIdx(1) && (obj.sensorIdx(4)||obj.sensorIdx(5)) && obj.mode >= 2
                 error("Localizer need to LiDAR. Please confirm LiDAR's sensor-index is true.")
             end
-            if obj.sensorIdx(8) && ~obj.sensorIdx(1)
-                error("LiDAR pose (sensor 8) is paired with the LiDAR point cloud. Please confirm LiDAR's sensor-index is true.")
+            if obj.sensorIdx(4) && obj.mode == 3
+                error("CR_debug does not subscribe to a SLAM pose on the real vehicle. Please use Matching (sensor 5).")
             end
-            if (obj.sensorIdx(5) || obj.sensorIdx(8)) && isempty(obj.tftree)
-                error("Matching (sensor 5) and LiDAR pose (sensor 8) read /tf. Please call setTfTree.")
+            if obj.sensorIdx(5) && isempty(obj.tftree)
+                error("Matching (sensor 5) reads /tf. Please call setTfTree.")
             end
             tStart = tic;
             ret = cell(size(sensorSubs));
@@ -107,12 +113,19 @@ classdef SensorFetcher < handle
 
             
             if obj.sensorIdx(1) && ~isempty(ret{1})
-                if obj.sensorIdx(8)
+                if obj.sensorIdx(5)
                     % 点群の stamp の時刻の map → LiDAR を /tf（ekf_localizer の周期ごとの予測値を補間）と
-                    % /tf_static（取付）から引いて組にする．その時刻より後の TF がまだ届いていなければ待たずに前の組を使い，
-                    % 次の周期にその時点の最新の点群で引き直す
+                    % /tf_static（取付）から引いて組にする．点群は常に最新を使うので，その時刻の TF が引けないときと，
+                    % 今の時刻と点群の stamp の差が lidarStampThreshold 以上のときは，前の組を使わず最新の TF で組にする
                     if isempty(obj.lidarPair) || ~isequal(obj.stampOf(ret{1}), obj.stampOf(obj.lidarPair.cloud))
-                        tf = obj.lookup(obj.frames.lidar, ret{1}.header.stamp);
+                        tf = [];
+                        if abs(obj.nowSec() - obj.stampSec(ret{1})) < obj.lidarStampThreshold
+                            tf = obj.lookup(obj.frames.lidar, ret{1}.header.stamp);
+                        end
+                        if isempty(tf)
+                            tf = obj.lookup(obj.frames.lidar);
+                            data.LIDAR_latest_tf = ~isempty(tf);
+                        end
                         if isempty(tf)
                             data.LIDAR_waiting = true;
                         else
@@ -150,14 +163,6 @@ classdef SensorFetcher < handle
                     ang(2) = ret{4}.orientation.x;
                     ang(3) = ret{4}.orientation.y;
                     ang(4) = ret{4}.orientation.z;
-                elseif obj.sensorIdx(4) % SLAM
-                    Plant.X = ret{4}.pose.position.x;
-                    Plant.Y = ret{4}.pose.position.y;
-                    Plant.Z = ret{4}.pose.position.z;
-                    ang(1) = ret{4}.pose.orientation.w;
-                    ang(2) = ret{4}.pose.orientation.x;
-                    ang(3) = ret{4}.pose.orientation.y;
-                    ang(4) = ret{4}.pose.orientation.z;
                 elseif obj.sensorIdx(5) % Matching（最新の /tf map → base：後輪間中心を現在時刻まで予測した値）
                     Plant.X = ret{5}.transform.translation.x;
                     Plant.Y = ret{5}.transform.translation.y;
@@ -283,6 +288,12 @@ classdef SensorFetcher < handle
         end
     end
     methods (Access=private)
+        function t = nowSec(obj)
+            % 今の ROS の時刻 [s]（Gazebo・録画の再生は /clock）
+            s = ros2time(obj.node, "now");
+            t = double(s.sec) + double(s.nanosec)*1e-9;
+        end
+
         function tf = lookup(obj, frame, stamp)
             % map → frame の TF（TransformStamped）．stamp を省くと最新．まだ引けなければ []（待たない）
             tf = [];
@@ -303,6 +314,11 @@ classdef SensorFetcher < handle
         function s = stampOf(msg)
             % header.stamp を [sec, nanosec] にする（点群と姿勢の組を比べる）
             s = [double(msg.header.stamp.sec), double(msg.header.stamp.nanosec)];
+        end
+
+        function t = stampSec(msg)
+            % header.stamp を [s] にする
+            t = double(msg.header.stamp.sec) + double(msg.header.stamp.nanosec)*1e-9;
         end
 
         function pose = poseOf(tf)

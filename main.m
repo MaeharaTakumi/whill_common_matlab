@@ -16,10 +16,9 @@ vehicleInfo.sensor(1) = true; % LiDAR
 vehicleInfo.sensor(2) = false; % GNSS
 vehicleInfo.sensor(3) = false; % Camera
 vehicleInfo.sensor(4) = false; % SLAM
-vehicleInfo.sensor(5) = true; % Matching (EXP Only. CR_debug: latest /tf map -> base, the rear axle center)
+vehicleInfo.sensor(5) = true; % Matching (EXP Only. CR_debug: Plant = latest /tf map -> base (rear axle center), data.LIDAR_pose = LiDAR pose at the LiDAR stamp)
 vehicleInfo.sensor(6) = false; % IMU (CR2 Only)
 vehicleInfo.sensor(7) = true; % Localization Debug
-vehicleInfo.sensor(8) = true; % LiDAR pose at the LiDAR stamp (CR_debug Only. /tf at the point cloud stamp)
 vehicleInfo.base_sensor = 1; % Standard sensor you use mainly. No standard:0, LiDAR:1, GNSS:2, Camera:3
 vehicleInfo.manualCon = false; % Enable Manual Control using Joystick (CR Only)
 %% Timer configurations

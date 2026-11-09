@@ -3,7 +3,8 @@ function  myplotResult(DATAdir,cfg)
     %   NDT の情報（/localization_debug，sensor(7)）：位置合わせの時間・angle_diff（受け取った周期だけ）
     %   Plant（Matching，sensor(5)）：後輪間中心の姿勢（周期ごと．最新の /tf map → base，現在時刻まで予測した値）．
     %     2026-10-26 の 62 より前の記録は /ekf_pose（LiDAR の姿勢），68 より前は /localization/base_pose
-    %   LIDAR_pose（sensor(8)）：点群の stamp の時刻の LiDAR の姿勢（新しい組を作った周期だけ．横軸はその周期の時刻）．
+    %   LIDAR_pose（sensor(5)）：点群の stamp の時刻の LiDAR の姿勢（新しい組を作った周期だけ．横軸はその周期の時刻）．
+    %     2026-11-09 から，その時刻の TF が引けないときと今の時刻との差がしきい値以上のときは最新の TF（LIDAR_latest_tf）．
     %     /tf を点群の stamp で引いた予測値（68 より前の記録は /localization/vlp16_pose の NDT で更新した直後の値）
     %   LiDAR_age：受け取った直後の ROS の時刻（data.Now）と使った点群の stamp の差（点群の古さ）
     % 線は後に描くほど細くし，点線・破線は使わない．枠は 4 辺とも黒
@@ -73,7 +74,8 @@ function  myplotResult(DATAdir,cfg)
     if ~isempty(lp)
         Tl = T(isNewPair);
         lidar = [[lp.X]',[lp.Y]',[lp.Z]',[lp.Roll]',[lp.Pitch]',unwrap([lp.Yaw]')] - origin;
-        stampL = [lp.Stamp]';
+        % 点群の stamp（最新の TF で組にした周期は lp.Stamp が点群の stamp と違う）
+        stampL = cellfun(@(r) double(r.LIDAR.header.stamp.sec) + double(r.LIDAR.header.stamp.nanosec)*1e-9, raw(isNewPair));
     end
     if hasLidarPose
         plantName = 'Base pose (rear axle center)';
