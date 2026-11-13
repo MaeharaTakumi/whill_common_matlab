@@ -41,6 +41,9 @@ classdef SensorFetcher < handle
             obj.tftree = tftree;
             obj.frames = frames;
             obj.node = node;
+            % 指定の時刻の TF が引けず最新の TF を使ったときの警告（main.m の warning('off','all') の後でも出す）
+            warning('on', 'CR_debug:LidarTfFallback');
+            warning('on', 'CR_debug:PlantTfFallback');
         end
 
         function [data,Plant] = getSensorData(obj,sensorSubs,whillSubs)
@@ -55,8 +58,9 @@ classdef SensorFetcher < handle
             % どの周期も同じフィールドにする（記録を cat で並べられるように）
             data = struct("LIDAR",[],"GNSS",[],"CAMERA",[],"IMU",[],"LIDAR_pose",[],"LIDAR_new",false, ...
                 "LIDAR_latest_tf",false,"LIDAR_waiting",false,"tform_velodyne",[],"NDT_info",[],"Now",[]);
+            % Plant.Stamp：Plant に使った TF の stamp [s]（sensor(5)．引けなければ []）
             Plant = struct("X",[.0],"Y",[.0],"Z",[.0], ...
-                "Roll",[.0],"Pitch",[.0],"Yaw",[.0],"odom",[0, 0, 0, 0],"info",[]);
+                "Roll",[.0],"Pitch",[.0],"Yaw",[.0],"odom",[0, 0, 0, 0],"info",[],"Stamp",[]);
             if obj.mode == 1
                 return;
             end
@@ -118,15 +122,26 @@ classdef SensorFetcher < handle
                 if obj.sensorIdx(5)
                     % 点群の stamp の時刻の map → LiDAR を /tf（ekf_localizer の周期ごとの予測値を補間）と
                     % /tf_static（取付）から引いて組にする．点群は常に最新を使うので，その時刻の TF が引けないときと，
-                    % 今の時刻と点群の stamp の差が lidarStampThreshold 以上のときは，前の組を使わず最新の TF で組にする
+                    % 今の時刻と点群の stamp の差が lidarStampThreshold 以上のときは，前の組を使わず最新の TF で組にする（どちらも警告を出す）
                     if isempty(obj.lidarPair) || ~isequal(obj.stampOf(ret{1}), obj.stampOf(obj.lidarPair.cloud))
                         tf = [];
-                        if abs(obj.nowSec() - obj.stampSec(ret{1})) < obj.lidarStampThreshold
+                        age = obj.nowSec() - obj.stampSec(ret{1});
+                        if abs(age) < obj.lidarStampThreshold
                             tf = obj.lookup(obj.frames.map, obj.frames.lidar, ret{1}.header.stamp);
+                            reason = "not in the TF buffer";
+                        else
+                            reason = sprintf("%.3f s from now, threshold %.3f s", age, obj.lidarStampThreshold);
                         end
                         if isempty(tf)
                             tf = obj.lookup(obj.frames.map, obj.frames.lidar);
                             data.LIDAR_latest_tf = ~isempty(tf);
+                            if isempty(tf)
+                                action = "no TF yet, keeping the previous pair";
+                            else
+                                action = sprintf("using the latest TF (stamp %.3f)", obj.stampSec(tf));
+                            end
+                            warning('CR_debug:LidarTfFallback', 'LiDAR: no %s -> %s at the point cloud stamp %.3f (%s); %s', ...
+                                obj.frames.map, obj.frames.lidar, obj.stampSec(ret{1}), reason, action);
                         end
                         if isempty(tf)
                             data.LIDAR_waiting = true;
@@ -157,8 +172,20 @@ classdef SensorFetcher < handle
                 data.tform_velodyne = obj.tformOf(obj.lookup(obj.frames.base, obj.frames.lidar));
             end
             if obj.sensorIdx(5) && ~obj.sensorIdx(4)
-                % 後輪間中心：最新の map → base（ekf_localizer が周期ごとに現在時刻まで予測した値）
-                ret{5} = obj.lookup(obj.frames.map, obj.frames.base);
+                % 後輪間中心：今の ROS の時刻（Gazebo・再生は /clock）の map → base（ekf_localizer が周期ごとに出す予測値を補間）．
+                % 引けなければ最新の TF を使い，警告を出す
+                nowStamp = ros2time(obj.node, "now");
+                ret{5} = obj.lookup(obj.frames.map, obj.frames.base, nowStamp);
+                if isempty(ret{5})
+                    ret{5} = obj.lookup(obj.frames.map, obj.frames.base);
+                    if isempty(ret{5})
+                        action = "no TF yet";
+                    else
+                        action = sprintf("using the latest TF (stamp %.3f)", obj.stampSec(ret{5}));
+                    end
+                    warning('CR_debug:PlantTfFallback', 'Plant: no %s -> %s at now %.3f; %s', ...
+                        obj.frames.map, obj.frames.base, double(nowStamp.sec) + double(nowStamp.nanosec)*1e-9, action);
+                end
             end
             if (obj.sensorIdx(4)|| obj.sensorIdx(5)) && (~isempty(ret{4}) || ~isempty(ret{5}))
                 if obj.mode==2 && obj.sensorIdx(4) % Gazebo真値 (/wheelchair/pose, geometry_msgs/Pose)
@@ -169,7 +196,8 @@ classdef SensorFetcher < handle
                     ang(2) = ret{4}.orientation.x;
                     ang(3) = ret{4}.orientation.y;
                     ang(4) = ret{4}.orientation.z;
-                elseif obj.sensorIdx(5) % Matching（最新の /tf map → base：後輪間中心を現在時刻まで予測した値）
+                elseif obj.sensorIdx(5) % Matching（今の時刻の /tf map → base．引けなければ最新）
+                    Plant.Stamp = obj.stampSec(ret{5});
                     Plant.X = ret{5}.transform.translation.x;
                     Plant.Y = ret{5}.transform.translation.y;
                     Plant.Z = ret{5}.transform.translation.z;

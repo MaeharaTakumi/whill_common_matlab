@@ -3,7 +3,7 @@ function myplotPointCloudVideo(DATAdir, MAPfile)
     %   DATAdir : userLocal.mat, userLocal_tmp.mat があるフォルダ
     %   MAPfile : 点群地図（.pcd）．空か無いファイルなら地図を描かない
     % 点群は，その stamp の時刻の LiDAR の姿勢（data.LIDAR_pose，/tf を点群の stamp で引いた値）で地図座標系に直す．
-    % 車両中心（後輪間中心，黒い点），向きの矢印と軌跡は Plant（最新の /tf map → base）．LIDAR_pose の無い古い記録は，
+    % 車両中心（後輪間中心，黒い点），向きの矢印と軌跡は Plant（今の ROS の時刻の /tf map → base．引けなければ最新）．LIDAR_pose の無い古い記録は，
     % Plant（/ekf_pose，LiDAR の姿勢）で点群を直す（点群と姿勢の時刻はそろっていない）．
     % 実験データの myplotPointCloudVideo.m（ndt/20261016）を元にした
     %% Settings

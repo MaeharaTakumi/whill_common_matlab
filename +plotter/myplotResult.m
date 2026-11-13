@@ -1,7 +1,7 @@
 function  myplotResult(DATAdir,cfg)
     % 自己位置推定（CR_debug）の記録を描く
     %   NDT の情報（/localization_debug，sensor(7)）：位置合わせの時間・angle_diff（受け取った周期だけ）
-    %   Plant（Matching，sensor(5)）：後輪間中心の姿勢（周期ごと．最新の /tf map → base，現在時刻まで予測した値）．
+    %   Plant（Matching，sensor(5)）：後輪間中心の姿勢（周期ごと．今の ROS の時刻の /tf map → base（ekf_localizer の予測値を補間），引けなければ最新の TF．2026-11-13 まではいつも最新の TF）．
     %     2026-10-26 の 62 より前の記録は /ekf_pose（LiDAR の姿勢），68 より前は /localization/base_pose
     %   LIDAR_pose（sensor(5)）：点群の stamp の時刻の LiDAR の姿勢（新しい組を作った周期だけ．横軸はその周期の時刻）．
     %     2026-11-09 から，その時刻の TF が引けないときと今の時刻との差がしきい値以上のときは最新の TF（LIDAR_latest_tf）．

@@ -50,7 +50,7 @@ classdef ROS2CommManager < bridge.ROS2CommStrategy
         function topics = getSensorTopics(obj)
             % Subscribeするセンサのトピックを定義
             %   1 LiDAR       /velodyne_points  点群（そのまま）
-            %   5 Matching    （トピックなし）   Plant：最新の /tf map → base（後輪間中心．ekf_localizer の 50 Hz の予測値），
+            %   5 Matching    （トピックなし）   Plant：今の ROS の時刻の /tf map → base（後輪間中心．ekf_localizer の 50 Hz の予測値を補間．引けなければ最新），Plant.Stamp：使った TF の stamp，
             %                                    data.LIDAR_pose：点群の stamp の時刻の map → velodyne（/tf を補間し /tf_static の取付を掛ける）
             %                                    data.tform_velodyne：取付 base → velodyne（/tf_static．rigidtform3d．毎周期引く．引けなければ []）
             switch obj.mode

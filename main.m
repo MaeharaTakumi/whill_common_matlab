@@ -16,7 +16,7 @@ vehicleInfo.sensor(1) = true; % LiDAR
 vehicleInfo.sensor(2) = false; % GNSS
 vehicleInfo.sensor(3) = false; % Camera
 vehicleInfo.sensor(4) = false; % SLAM
-vehicleInfo.sensor(5) = true; % Matching (EXP Only. CR_debug: Plant = latest /tf map -> base (rear axle center), data.LIDAR_pose = LiDAR pose at the LiDAR stamp, data.tform_velodyne = mount base -> velodyne as rigidtform3d)
+vehicleInfo.sensor(5) = true; % Matching (EXP Only. CR_debug: Plant = /tf map -> base (rear axle center) at the current ROS time, latest if unavailable; Plant.Stamp = its stamp, data.LIDAR_pose = LiDAR pose at the LiDAR stamp, data.tform_velodyne = mount base -> velodyne as rigidtform3d)
 vehicleInfo.sensor(6) = false; % IMU (CR2 Only)
 vehicleInfo.sensor(7) = true; % Localization Debug
 vehicleInfo.base_sensor = 1; % Standard sensor you use mainly. No standard:0, LiDAR:1, GNSS:2, Camera:3
