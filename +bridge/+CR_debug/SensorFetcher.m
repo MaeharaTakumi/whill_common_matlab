@@ -49,10 +49,12 @@ classdef SensorFetcher < handle
             % LIDAR_pose：LIDAR（点群）の stamp の時刻の LiDAR の姿勢（sensor(5)．/tf を引く），LIDAR_new：前の周期と違う点群か，
             % LIDAR_latest_tf：新しい点群の stamp の時刻の TF が引けないか，今の時刻と点群の stamp の差がしきい値以上で，最新の TF で組にしたか，
             % LIDAR_waiting：TF が 1 つも引けず，前の組のままにしたか，
+            % tform_velodyne：取付 base → LiDAR（/tf_static．sensor(5)．rigidtform3d で，LiDAR の座標の点を base の座標に直す．
+            % 毎周期引き，引けなければ []），
             % NDT_info：/localization_debug（sensor(7)），Now：受け取った直後の ROS の時刻（ROS2CommManager が入れる）。
             % どの周期も同じフィールドにする（記録を cat で並べられるように）
             data = struct("LIDAR",[],"GNSS",[],"CAMERA",[],"IMU",[],"LIDAR_pose",[],"LIDAR_new",false, ...
-                "LIDAR_latest_tf",false,"LIDAR_waiting",false,"NDT_info",[],"Now",[]);
+                "LIDAR_latest_tf",false,"LIDAR_waiting",false,"tform_velodyne",[],"NDT_info",[],"Now",[]);
             Plant = struct("X",[.0],"Y",[.0],"Z",[.0], ...
                 "Roll",[.0],"Pitch",[.0],"Yaw",[.0],"odom",[0, 0, 0, 0],"info",[]);
             if obj.mode == 1
@@ -120,10 +122,10 @@ classdef SensorFetcher < handle
                     if isempty(obj.lidarPair) || ~isequal(obj.stampOf(ret{1}), obj.stampOf(obj.lidarPair.cloud))
                         tf = [];
                         if abs(obj.nowSec() - obj.stampSec(ret{1})) < obj.lidarStampThreshold
-                            tf = obj.lookup(obj.frames.lidar, ret{1}.header.stamp);
+                            tf = obj.lookup(obj.frames.map, obj.frames.lidar, ret{1}.header.stamp);
                         end
                         if isempty(tf)
-                            tf = obj.lookup(obj.frames.lidar);
+                            tf = obj.lookup(obj.frames.map, obj.frames.lidar);
                             data.LIDAR_latest_tf = ~isempty(tf);
                         end
                         if isempty(tf)
@@ -150,9 +152,13 @@ classdef SensorFetcher < handle
                 data.CAMERA = ret{3};
                 doProcessing = 1;
             end
+            if obj.sensorIdx(5)
+                % 取付 base → LiDAR（/tf_static）．毎周期引く．まだ届いていなければ []
+                data.tform_velodyne = obj.tformOf(obj.lookup(obj.frames.base, obj.frames.lidar));
+            end
             if obj.sensorIdx(5) && ~obj.sensorIdx(4)
                 % 後輪間中心：最新の map → base（ekf_localizer が周期ごとに現在時刻まで予測した値）
-                ret{5} = obj.lookup(obj.frames.base);
+                ret{5} = obj.lookup(obj.frames.map, obj.frames.base);
             end
             if (obj.sensorIdx(4)|| obj.sensorIdx(5)) && (~isempty(ret{4}) || ~isempty(ret{5}))
                 if obj.mode==2 && obj.sensorIdx(4) % Gazebo真値 (/wheelchair/pose, geometry_msgs/Pose)
@@ -294,16 +300,16 @@ classdef SensorFetcher < handle
             t = double(s.sec) + double(s.nanosec)*1e-9;
         end
 
-        function tf = lookup(obj, frame, stamp)
-            % map → frame の TF（TransformStamped）．stamp を省くと最新．まだ引けなければ []（待たない）
+        function tf = lookup(obj, parent, child, stamp)
+            % parent → child の TF（TransformStamped）．stamp を省くと最新．まだ引けなければ []（待たない）
             tf = [];
             try
-                if nargin < 3
-                    if canTransform(obj.tftree, obj.frames.map, frame)
-                        tf = getTransform(obj.tftree, obj.frames.map, frame);
+                if nargin < 4
+                    if canTransform(obj.tftree, parent, child)
+                        tf = getTransform(obj.tftree, parent, child);
                     end
-                elseif canTransform(obj.tftree, obj.frames.map, frame, stamp)
-                    tf = getTransform(obj.tftree, obj.frames.map, frame, stamp);
+                elseif canTransform(obj.tftree, parent, child, stamp)
+                    tf = getTransform(obj.tftree, parent, child, stamp);
                 end
             catch
                 tf = [];
@@ -328,6 +334,17 @@ classdef SensorFetcher < handle
             eul = quat2eul([q.w, q.x, q.y, q.z],"ZYX");
             pose = struct("X",t.x,"Y",t.y,"Z",t.z,"Roll",eul(3),"Pitch",eul(2),"Yaw",eul(1), ...
                 "Stamp",double(tf.header.stamp.sec) + double(tf.header.stamp.nanosec)*1e-9);
+        end
+
+        function T = tformOf(tf)
+            % TransformStamped（parent → child）を rigidtform3d にする（child の座標の点を parent の座標に直す）．tf が [] なら []
+            T = [];
+            if isempty(tf)
+                return;
+            end
+            t = tf.transform.translation;
+            q = tf.transform.rotation;
+            T = rigidtform3d(quat2rotm([q.w, q.x, q.y, q.z]), [t.x, t.y, t.z]);
         end
     end
 end

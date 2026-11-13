@@ -52,6 +52,7 @@ classdef ROS2CommManager < bridge.ROS2CommStrategy
             %   1 LiDAR       /velodyne_points  点群（そのまま）
             %   5 Matching    （トピックなし）   Plant：最新の /tf map → base（後輪間中心．ekf_localizer の 50 Hz の予測値），
             %                                    data.LIDAR_pose：点群の stamp の時刻の map → velodyne（/tf を補間し /tf_static の取付を掛ける）
+            %                                    data.tform_velodyne：取付 base → velodyne（/tf_static．rigidtform3d．毎周期引く．引けなければ []）
             switch obj.mode
                 case 2 % Gazebo (4番目のみ真値 /wheelchair/pose，他は実機と共通)
                     topics = {'/velodyne_points','/ublox_gps_node/fix','/yolo/detections','/wheelchair/pose',[],[],'/localization_debug'};
