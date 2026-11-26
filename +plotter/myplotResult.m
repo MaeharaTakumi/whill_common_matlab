@@ -16,7 +16,8 @@ function  myplotResult(DATAdir,cfg,MAPfile)
     %   LiDAR_age：Plant.Stamp と使った点群の stamp の差（点群の古さ）．2026-11-26 から Plant.Stamp は最新の TF の stamp なので，
     %     今より 20〜40 ms 先の予測の分だけ大きく出る（2026-11-19〜11-26 の記録は今の ROS の時刻，それより前は受け取った直後の data.Now）
     %   新しい点群を受け取った周期は，点群の stamp が前の周期と違う周期
-    % 線は後に描くほど細くし，点線・破線は使わない．枠は 4 辺とも黒
+    %   NDT のフィットネススコア（ndt_fitness_score）：NDT_info.score（NDT の解での値）．地図を渡さなくても描く
+    % 線は後に描くほど細くし，点線・破線は使わない．枠は 4 辺とも黒．図の大きさ・文字は computation_Time と同じ（newFigure）
     %% Settings
     % warning('off','all');
     % 読み込み
@@ -106,6 +107,10 @@ function  myplotResult(DATAdir,cfg,MAPfile)
 
         plotWithAverage(Tn, ndt.angle_diff, 'Rotation magnitude difference', 'Rotation magnitude difference [deg]');
         saveFigure('ndt_angle_diff', Outputdir)
+
+        % NDT が送ったフィットネススコア（NDT の解での値．地図は要らない）
+        plotWithAverage(Tn, ndt.score, 'NDT fitness score', 'NDT fitness score [m$^2$]');
+        saveFigure('ndt_fitness_score', Outputdir)
     end
 
     % フィットネススコア（地図を渡したときだけ）
@@ -136,7 +141,7 @@ function  myplotResult(DATAdir,cfg,MAPfile)
             names{end+1} = 'Latest TF used';   % 点群の stamp の TF が引けなかった組
         end
         xlabel('Time [s]')
-        ylabel('Fitness score [m^2]', 'Interpreter', 'tex')
+        ylabel('Fitness score [m$^2$]')
         timeLim(Tl)
         legend(names, 'Location', 'best')
         saveFigure('fitness_score', Outputdir)
@@ -259,8 +264,14 @@ function C = palette()
 end
 
 function ax = newFigure()
-    figure
-    ax = gca;
+    % computation_Time（DataPlotter の setFigure）と同じ大きさと書体にする：図 560 × 420 px 相当（5.83 × 4.38 in．jpeg は 875 × 656），
+    % 目盛 16 pt（軸ラベル・題はその 1.1 倍の 17.6 pt），凡例 13 pt（saveFigure でそろえる），LaTeX．DataPlotter の既定（groot）に頼らないので，
+    % 単独で動かしても同じになる（-batch では既定の図が 14.7 × 8.8 in と大きく，文字が小さく見えた）
+    fig = figure('Units', 'inches', 'Position', [1 1 560/96 420/96], 'Color', 'w', ...
+        'DefaultTextInterpreter', 'latex', 'DefaultLegendInterpreter', 'latex', ...
+        'DefaultAxesTickLabelInterpreter', 'latex');
+    ax = axes(fig);
+    ax.FontSize = 16;
     box on; hold on;
     ax.XColor = 'k';
     ax.YColor = 'k';
@@ -328,6 +339,7 @@ end
 
 function saveFigure(Name, Outputdir)
 	hold off;
+    set(findobj(gcf, 'Type', 'Legend'), 'FontSize', 13);   % computation_Time と同じ
 	saveas(gcf,strcat(Outputdir,strcat('/eps/',Name)),'epsc');
     saveas(gcf,strcat(Outputdir,strcat('/jpeg/',Name)),'jpeg');
 	savefig(gcf,strcat(Outputdir,strcat('/fig/',Name)));
