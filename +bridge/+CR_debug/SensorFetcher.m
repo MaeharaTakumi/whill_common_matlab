@@ -5,7 +5,6 @@ classdef SensorFetcher < handle
         mode
         sensorIdx
         baseSensor
-        nostd = 0;
         % sensor(5) の TF の引き方（cfg.getNewTf）．後輪間中心（Plant）はどちらも最新の TF
         %   false：LiDAR の姿勢は点群の stamp の時刻の TF（引けなければ最新）
         %   true ：LiDAR の姿勢も最新の TF
@@ -13,8 +12,9 @@ classdef SensorFetcher < handle
 
     end
     properties (Access=private)
-        prevAngle
-        timeout = 0.05;
+        prevPlantPose   % 前の周期の Plant の姿勢（角度は調整後．角度を連続にするのに使う．まだ無ければ []）
+        prevLidarPose   % 前の周期の LiDAR の姿勢（同上）
+        timeout = 0.05; % [s] base_sensor のメッセージを待つ上限
         tftree          % ros2tf（/tf・/tf_static を溜める．ROS2CommManager が setTfTree で渡す）
         frames          % TF のフレーム名（struct: map, base, lidar）
 
@@ -22,17 +22,25 @@ classdef SensorFetcher < handle
     properties (Constant)
         t_cr = 0.495; % Tread width of CR
     end
+    properties (Constant, Access=private)
+        angleNames = ["Roll","Pitch","Yaw"]; % 前の周期から連続にする角度のフィールド
+    end
 
     methods
         function obj = SensorFetcher(cfg)
+            % 設定 cfg（modeNumber，vehicleInfo.sensor・base_sensor，省略できる getNewTf）から作る．
+            % 使えないセンサの組み合わせはエラーにする
             obj.mode = cfg.modeNumber;
             obj.sensorIdx = cfg.vehicleInfo.sensor;
             if isfield(cfg,'getNewTf')
                 obj.getNewTf = cfg.getNewTf;
             end
             obj.baseSensor = cfg.vehicleInfo.base_sensor;
-            if obj.baseSensor == 0
-                obj.nostd = 1;
+            if ~obj.sensorIdx(1) && (obj.sensorIdx(4)||obj.sensorIdx(5)) && obj.mode >= 2
+                error("Localizer need to LiDAR. Please confirm LiDAR's sensor-index is true.")
+            end
+            if obj.sensorIdx(4) && obj.mode == 3
+                error("CR_debug does not subscribe to a SLAM pose on the real vehicle. Please use Matching (sensor 5).")
             end
         end
 
@@ -46,6 +54,8 @@ classdef SensorFetcher < handle
 
         function [data,Plant] = getSensorData(obj,sensorSubs,whillSubs)
             % subscriberからセンサ値を取得
+            %   sensorSubs：センサの subscriber の cell（購読していないものは []），whillSubs：車両の subscriber の cell
+            %   data：センサの値と LiDAR の姿勢，Plant：車両の姿勢（後輪間中心）と車輪の速度
             doProcessing = 0;
             % LIDAR_pose（sensor(5)）：LiDAR の姿勢（getNewTf が false なら点群の stamp の時刻，true なら最新）．
             % X, Y, Z, Roll, Pitch, Yaw，Stamp（使った TF の stamp [s]），
@@ -53,39 +63,22 @@ classdef SensorFetcher < handle
             % NDT_info（/localization_debug の最新．無ければ []）．map → LiDAR が引けない周期は []
             data = struct("LIDAR",[],"GNSS",[],"CAMERA",[],"IMU",[],"LIDAR_pose",[]);
             % Plant.Stamp：Plant に使った TF の stamp [s]（sensor(5)．最新の TF の stamp．引けなければ []）
+            % Plant と LIDAR_pose の Roll, Pitch, Yaw は前の周期から連続にする（±π に収まらない）
             Plant = struct("X",[.0],"Y",[.0],"Z",[.0], "Roll",[.0],"Pitch",[.0],"Yaw",[.0],"odom",[0, 0, 0, 0],"Stamp",[]);
             if obj.mode == 1
                 return;
             end
-            if ~obj.sensorIdx(1) && (obj.sensorIdx(4)||obj.sensorIdx(5)) && obj.mode >= 2
-                error("Localizer need to LiDAR. Please confirm LiDAR's sensor-index is true.")
-            end
-            if obj.sensorIdx(4) && obj.mode == 3
-                error("CR_debug does not subscribe to a SLAM pose on the real vehicle. Please use Matching (sensor 5).")
-            end
-            if obj.sensorIdx(5) && isempty(obj.tftree)
-                error("Matching (sensor 5) reads /tf. Please call setTfTree.")
-            end
             tStart = tic;
             ret = cell(size(sensorSubs));
-            while toc(tStart) < obj.timeout %true 
-                whillret = whillSubs{1}.LatestMessage;                
-                if ~isempty(sensorSubs{1})
-                    ret{1} = sensorSubs{1}.LatestMessage;
+            while toc(tStart) < obj.timeout %true
+                whillret = whillSubs{1}.LatestMessage;
+                for i = 1:numel(sensorSubs)
+                    if ~isempty(sensorSubs{i})
+                        ret{i} = sensorSubs{i}.LatestMessage;
+                    end
                 end
-                if ~isempty(sensorSubs{2})
-                    ret{2} = sensorSubs{2}.LatestMessage;
-                end
-                if ~isempty(sensorSubs{3})
-                    ret{3} = sensorSubs{3}.LatestMessage;
-                end
-                if ~isempty(sensorSubs{4})
-                    ret{4} = sensorSubs{4}.LatestMessage;
-                end
-                if ~isempty(sensorSubs{5})
-                    ret{5} = sensorSubs{5}.LatestMessage;
-                end
-                if obj.nostd || ~isempty(ret{obj.baseSensor})
+                % 基準のセンサ（base_sensor．0 は基準なし）のメッセージがあれば抜ける
+                if obj.baseSensor == 0 || ~isempty(ret{obj.baseSensor})
                     break;
                 end
             end
@@ -109,9 +102,7 @@ classdef SensorFetcher < handle
 
             
             % ---- 受け取ったものをそのまま入れる ----
-            if obj.sensorIdx(1) && ~isempty(ret{1})
-                data.LIDAR = ret{1};
-            end
+            data.LIDAR = ret{1};
             if obj.sensorIdx(2) && ~isempty(ret{2})
                 data.GNSS = ret{2};
             end
@@ -120,61 +111,29 @@ classdef SensorFetcher < handle
                 doProcessing = 1;
             end
 
-            % ---- /tf から引くもの（sensor 5）：LiDAR の姿勢，後輪間中心 ----
-            tfBase = [];
-            if obj.sensorIdx(5)
-                % LiDAR の姿勢：getNewTf が true なら最新の map → LiDAR，
-                % false なら点群の stamp の時刻の map → LiDAR（引けなければ最新．警告）
-                if ~isempty(data.LIDAR)
-                    cloud = data.LIDAR;
-                    if obj.getNewTf
-                        tf = obj.lookup(obj.frames.map, obj.frames.lidar);
-                    else
-                        [tf, latest] = obj.lookupMap(obj.frames.lidar, cloud.header.stamp);
-                        if latest
-                            warning('CR_debug:LidarTfFallback', ...
-                                'LiDAR: no TF at the point cloud stamp %.3f; using the latest TF if any', obj.stampSec(cloud));
-                        end
-                    end
-                    if ~isempty(tf)
-                        p = obj.poseOf(tf.transform.translation, tf.transform.rotation, obj.stampSec(tf));
-                        % 取付 base → LiDAR（/tf_static）
-                        p.tform = obj.tformOf(obj.lookup(obj.frames.base, obj.frames.lidar));
-                        % NDT の情報（/localization_debug の最新．stamp が無いので，この点群の結果とは限らない）
-                        p.NDT_info = [];
-                        if ~isempty(ret{5})
-                            d = ret{5}.data;
-                            p.NDT_info = struct("downsampled_points",d(1),"matching_time",d(2), ...
-                                "convergence",d(3),"score",d(4),"angle_diff",d(5));
-                        end
-                        data.LIDAR_pose = p;
-                    end
-                end
-                % 後輪間中心：最新の map → base（getNewTf によらない）．真値を使うとき（sensor 4）は引かない
-                if ~obj.sensorIdx(4)
-                    tfBase = obj.lookup(obj.frames.map, obj.frames.base);
-                end
+            % ---- LiDAR の姿勢（sensor 5）：新旧によらず，点群があれば毎周期 /tf から引く ----
+            if obj.sensorIdx(5) && ~isempty(data.LIDAR)
+                data.LIDAR_pose = obj.lidarPose(data.LIDAR, ret{5});
             end
 
-            % ---- Plant：Gazebo の真値（sensor 4．/wheelchair/pose）か，最新の map → base ----
+            % ---- Plant：Gazebo の真値（sensor 4．/wheelchair/pose）か，最新の map → base（sensor 5） ----
             pose = [];
-            if obj.mode == 2 && obj.sensorIdx(4) && ~isempty(ret{4})
-                pose = obj.poseOf(ret{4}.position, ret{4}.orientation, []);
-            elseif ~isempty(tfBase)
-                pose = obj.poseOf(tfBase.transform.translation, tfBase.transform.rotation, obj.stampSec(tfBase));
+            if obj.sensorIdx(4)
+                % 真値がまだ届いていなければ Plant は 0 のまま
+                if ~isempty(ret{4})
+                    pose = obj.poseOf(ret{4}.position, ret{4}.orientation, []);
+                end
+            elseif obj.sensorIdx(5)
+                tf = obj.lookup(obj.frames.map, obj.frames.base);
+                if ~isempty(tf)
+                    pose = obj.poseOf(tf.transform.translation, tf.transform.rotation, obj.stampSec(tf));
+                end
             end
             if ~isempty(pose)
-                Plant.X = pose.X;
-                Plant.Y = pose.Y;
-                Plant.Z = pose.Z;
-                Plant.Roll = pose.Roll;
-                Plant.Pitch = pose.Pitch;
-                Plant.Yaw = pose.Yaw;
-                Plant.Stamp = pose.Stamp;
-                if ~isempty(obj.prevAngle)
-                    Plant = AngleAdjstment(Plant,obj.prevAngle);
+                pose = obj.continueAngles(pose, "prevPlantPose");
+                for name = string(fieldnames(pose))'
+                    Plant.(name) = pose.(name);
                 end
-                obj.prevAngle = struct("Roll",pose.Roll,"Pitch",pose.Pitch,"Yaw",pose.Yaw);
             end
             if doProcessing
                 data.CAMERA.processed_masks = camera_postProcess(data.CAMERA);
@@ -236,57 +195,58 @@ classdef SensorFetcher < handle
                 mask = reshape(byteArr, [w, h])';                  % 転置して (h×w) に
             
             end
-            function ret = AngleAdjstment(ret, Data)
-                while ret.Roll - Data.Roll > pi
-                   ret.Roll = ret.Roll - 2 * pi;
-                end
-            
-                while ret.Roll - Data.Roll <= -pi
-                   ret.Roll = ret.Roll + 2 * pi;
-                end
-            
-                while ret.Pitch - Data.Pitch > pi
-                   ret.Pitch = ret.Pitch - 2 * pi;
-                end
-            
-                while ret.Pitch - Data.Pitch <= -pi
-                   ret.Pitch = ret.Pitch + 2 * pi;
-                end
-            
-                while ret.Yaw - Data.Yaw > pi
-                   ret.Yaw = ret.Yaw - 2 * pi;
-                end
-            
-                while ret.Yaw - Data.Yaw <= -pi
-                   ret.Yaw = ret.Yaw + 2 * pi;
-                end
-            end
 
         end
     end
     methods (Access=private)
-        function [tf, latest] = lookupMap(obj, child, stamp)
-            % map → child を stamp の時刻で引く．引けなければ最新を引き latest = true．TF が 1 つも無ければ tf = []
-            tf = obj.lookup(obj.frames.map, child, stamp);
-            latest = isempty(tf);
-            if latest
-                tf = obj.lookup(obj.frames.map, child);
+        function pose = lidarPose(obj, cloud, ndtMsg)
+            % LiDAR の姿勢（data.LIDAR_pose）を作る
+            %   cloud：点群（PointCloud2），ndtMsg：/localization_debug の最新のメッセージ（無ければ []）
+            %   pose ：poseOf の姿勢（角度は前の周期から連続）に tform と NDT_info を足したもの．map → LiDAR が引けなければ []
+            % getNewTf が true なら最新の map → LiDAR，false なら点群の stamp の時刻（引けなければ最新．警告）
+            if obj.getNewTf
+                tf = obj.lookup(obj.frames.map, obj.frames.lidar);
+            else
+                tf = obj.lookup(obj.frames.map, obj.frames.lidar, cloud.header.stamp);
+                if isempty(tf)
+                    warning('CR_debug:LidarTfFallback', ...
+                        'LiDAR: no TF at the point cloud stamp %.3f; using the latest TF if any', obj.stampSec(cloud));
+                    tf = obj.lookup(obj.frames.map, obj.frames.lidar);
+                end
             end
+            pose = [];
+            if isempty(tf)
+                return;
+            end
+            pose = obj.poseOf(tf.transform.translation, tf.transform.rotation, obj.stampSec(tf));
+            pose = obj.continueAngles(pose, "prevLidarPose");
+            % 取付 base → LiDAR（/tf_static）
+            pose.tform = obj.tformOf(obj.lookup(obj.frames.base, obj.frames.lidar));
+            % NDT の情報（stamp が無いので，この点群の結果とは限らない）
+            pose.NDT_info = obj.ndtInfoOf(ndtMsg);
         end
 
-        function tf = lookup(obj, parent, child, stamp)
-            % parent → child の TF（TransformStamped）．stamp を省くと最新．まだ引けなければ []（待たない）
-            tf = [];
-            try
-                if nargin < 4
-                    if canTransform(obj.tftree, parent, child)
-                        tf = getTransform(obj.tftree, parent, child);
-                    end
-                elseif canTransform(obj.tftree, parent, child, stamp)
-                    tf = getTransform(obj.tftree, parent, child, stamp);
+        function pose = continueAngles(obj, pose, prevName)
+            % pose の Roll, Pitch, Yaw を前の周期の値（調整後）に最も近い角度にし，次の周期のために覚える
+            %   pose    ：poseOf の姿勢（角度は ±π の範囲）
+            %   prevName：前の周期の姿勢を持つプロパティの名前（"prevPlantPose" か "prevLidarPose"）
+            %   出力    ：角度を連続にした pose（前の値が無い最初の周期は生の値のまま）
+            prev = obj.(prevName);
+            if ~isempty(prev)
+                for name = obj.angleNames
+                    pose.(name) = prev.(name) + mod(pose.(name) - prev.(name) + pi, 2*pi) - pi;
                 end
-            catch
-                tf = [];
+            end
+            obj.(prevName) = pose;
+        end
+
+        function tf = lookup(obj, parent, child, varargin)
+            % parent → child の TF（TransformStamped）を引く（待たない）
+            %   varargin：stamp（builtin_interfaces/Time）を渡せばその時刻，渡さなければ最新
+            %   tf      ：引けなければ []（getTransform の例外はそのまま呼び出し元へ出す）
+            tf = [];
+            if canTransform(obj.tftree, parent, child, varargin{:})
+                tf = getTransform(obj.tftree, parent, child, varargin{:});
             end
         end
     end
@@ -311,6 +271,17 @@ classdef SensorFetcher < handle
             t = tf.transform.translation;
             q = tf.transform.rotation;
             T = rigidtform3d(quat2rotm([q.w, q.x, q.y, q.z]), [t.x, t.y, t.z]);
+        end
+
+        function info = ndtInfoOf(msg)
+            % /localization_debug のメッセージ（Float32MultiArray）を NDT の情報の struct にする．msg が [] なら []
+            info = [];
+            if isempty(msg)
+                return;
+            end
+            d = msg.data;
+            info = struct("downsampled_points",d(1),"matching_time",d(2), ...
+                "convergence",d(3),"score",d(4),"angle_diff",d(5));
         end
     end
 end
