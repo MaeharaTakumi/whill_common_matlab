@@ -35,7 +35,7 @@ classdef ROS2CommManager < bridge.ROS2CommStrategy
                 if mode == 2
                     frames.base = "base_footprint";
                 end
-                obj.sensorFetcher.setTfTree(obj.tftree, frames, obj.node);
+                obj.sensorFetcher.setTfTree(obj.tftree, frames);
             end
         end
         
@@ -44,9 +44,10 @@ classdef ROS2CommManager < bridge.ROS2CommStrategy
             % Subscribeするセンサのトピックを定義
             %   1 LiDAR       /velodyne_points     点群（そのまま data.LIDAR）
             %   4 SLAM        /wheelchair/pose     Gazebo だけ．真値を Plant にする
-            %   5 Matching    /localization_debug  NDT の情報（data.LIDAR_pose.NDT_info）．姿勢は /tf から引く：
-            %                                      Plant：今の ROS の時刻の map → base（後輪間中心．引けなければ最新），Plant.Stamp：使った TF の stamp，
-            %                                      data.LIDAR_pose：点群の stamp の時刻の map → velodyne（今の時刻との差がしきい値以上なら今の時刻），
+            %   5 Matching    /localization_debug  NDT の情報（data.LIDAR_pose.NDT_info）．姿勢は /tf から引く（引き方は cfg.getNewTf）：
+            %                                      Plant：最新の map → base（後輪間中心），Plant.Stamp：使った TF の stamp，
+            %                                      data.LIDAR_pose：getNewTf が false なら点群の stamp の時刻の map → velodyne（引けなければ最新），
+            %                                                       true なら最新の map → velodyne，
             %                                      data.LIDAR_pose.tform：取付 base → velodyne（/tf_static．rigidtform3d）
             switch obj.mode
                 case 2 % Gazebo (4番目のみ真値 /wheelchair/pose，他は実機と共通)

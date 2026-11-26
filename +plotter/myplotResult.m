@@ -1,12 +1,15 @@
 function  myplotResult(DATAdir,cfg)
     % 自己位置推定（CR_debug）の記録を描く
     %   NDT の情報（/localization_debug，sensor(5)．LIDAR_pose.NDT_info．2026-11-19 より前は sensor(7) の NDT_info）：位置合わせの時間・angle_diff（受け取った周期だけ）
-    %   Plant（Matching，sensor(5)）：後輪間中心の姿勢（周期ごと．今の ROS の時刻の /tf map → base（ekf_localizer の予測値を補間），引けなければ最新の TF．2026-11-13 まではいつも最新の TF）．
+    %   Plant（Matching，sensor(5)）：後輪間中心の姿勢（周期ごと．最新の /tf map → base（ekf_localizer の一番新しい刻み．今より 20〜40 ms 先の予測）．
+    %     2026-11-19〜11-26 の記録は今の ROS の時刻の TF（引けなければ最新），2026-11-13 までは最新の TF）．
     %     2026-10-26 の 62 より前の記録は /ekf_pose（LiDAR の姿勢），68 より前は /localization/base_pose
     %   LIDAR_pose（sensor(5)）：点群の stamp の時刻の LiDAR の姿勢（新しい点群を受け取った周期だけ．横軸はその周期の時刻）．
-    %     今の時刻との差がしきい値以上のときと，その時刻の TF が引けないときは，今の時刻（引けなければ最新）の TF（LIDAR_pose.Stamp が点群の stamp と違う）．
+    %     その時刻の TF が引けないときと cfg.getNewTf が true のときは最新の TF（LIDAR_pose.Stamp が点群の stamp と違う）．
+    %     2026-11-26 より前の記録は，今の時刻との差がしきい値以上なら今の時刻の TF．
     %     /tf を引いた予測値（68 より前の記録は /localization/vlp16_pose の NDT で更新した直後の値）
-    %   LiDAR_age：今の ROS の時刻（Plant.Stamp．2026-11-19 より前は受け取った直後の data.Now）と使った点群の stamp の差（点群の古さ）
+    %   LiDAR_age：Plant.Stamp と使った点群の stamp の差（点群の古さ）．2026-11-26 から Plant.Stamp は最新の TF の stamp なので，
+    %     今より 20〜40 ms 先の予測の分だけ大きく出る（2026-11-19〜11-26 の記録は今の ROS の時刻，それより前は受け取った直後の data.Now）
     %   新しい点群を受け取った周期は，点群の stamp が前の周期と違う周期
     % 線は後に描くほど細くし，点線・破線は使わない．枠は 4 辺とも黒
     %% Settings
@@ -79,7 +82,7 @@ function  myplotResult(DATAdir,cfg)
     if ~isempty(lp)
         Tl = T(isNewPair);
         lidar = [[lp.X]',[lp.Y]',[lp.Z]',[lp.Roll]',[lp.Pitch]',unwrap([lp.Yaw]')] - origin;
-        % 点群の stamp（今の時刻や最新の TF を使った周期は lp.Stamp が点群の stamp と違う）
+        % 点群の stamp（最新の TF を使った周期は lp.Stamp が点群の stamp と違う）
         stampL = stampAll(isNewPair);
     end
     if hasLidarPose
@@ -130,8 +133,8 @@ function  myplotResult(DATAdir,cfg)
         saveFigure('LiDAR_pair_interval', Outputdir)
     end
 
-    % 点群の古さ：今の ROS の時刻 − 使った点群の stamp（周期ごと．新しい点群を受け取った周期は点）．
-    % 今の時刻は Plant.Stamp（今の時刻で引いた TF の stamp．最新の TF で代えた周期はその stamp，真値を使うときは無い）
+    % 点群の古さ：Plant.Stamp − 使った点群の stamp（周期ごと．新しい点群を受け取った周期は点）．
+    % Plant.Stamp は Plant に使った最新の TF の stamp（今より 20〜40 ms 先の予測の刻み．真値を使うときは無い）
     plants = {tmp_Estimator.Plant}';
     age = (cellfun(@nowOf, raw, plants) - stampAll) * 1e3;
     hasAge = ~isnan(age);
@@ -144,7 +147,7 @@ function  myplotResult(DATAdir,cfg)
         plot(Ta, age, '-', 'Color', C(1,:), 'LineWidth', 1.6);
         plot(Ta(isNew), age(isNew), 'o', 'Color', C(2,:), 'MarkerFaceColor', C(2,:), 'MarkerSize', 3);
         xlabel('Time [s]')
-        ylabel('Current time - point cloud stamp [ms]')
+        ylabel('Plant TF stamp - point cloud stamp [ms]')
         timeLim(T)
         legend(sprintf('Every cycle (mean %.0f ms)', mean(age)), ...
             sprintf('New point cloud received (mean %.0f ms)', mean(age(isNew))), 'Location', 'best')
@@ -171,7 +174,7 @@ function n = ndtOf(r)
 end
 
 function t = nowOf(r, P)
-    % 今の ROS の時刻 [s]．2026-11-19 から Plant.Stamp，それより前の記録は受け取った直後の data.Now．無ければ NaN
+    % 点群の古さの基準の時刻 [s]．2026-11-19 から Plant.Stamp（11-26 から最新の TF の stamp），それより前の記録は受け取った直後の data.Now．無ければ NaN
     t = NaN;
     if isfield(r,'Now') && ~isempty(r.Now)
         t = r.Now;
