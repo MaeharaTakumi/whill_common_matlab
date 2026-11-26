@@ -1,6 +1,11 @@
-function  myplotResult(DATAdir,cfg)
+function  myplotResult(DATAdir,cfg,MAPfile)
     % 自己位置推定（CR_debug）の記録を描く
-    %   NDT の情報（/localization_debug，sensor(5)．LIDAR_pose.NDT_info．2026-11-19 より前は sensor(7) の NDT_info）：位置合わせの時間・angle_diff（受け取った周期だけ）
+    %   MAPfile：点群地図（.pcd）．渡したときだけフィットネススコアを描く（省く・空なら描かない．無いファイルなら警告して描かない）
+    %   NDT の情報（/localization_debug，sensor(5)．LIDAR_pose.NDT_info．2026-11-19 より前は sensor(7) の NDT_info）：位置合わせの時間・
+    %     angle_diff（受け取った周期だけ）．angle_diff は初期値と NDT の解のそれぞれの回転の大きさ（軸角の角度）の差で，2 つの姿勢の間の
+    %     角度ではない（yaw が 0・±π をまたぐと小さく出る）ので，図では Rotation magnitude difference と呼ぶ
+    %   フィットネススコア（fitness score）：MATLAB が受け取った点群と LIDAR_pose の組（新しい点群を受け取った周期）で，点群を地図に重ね，
+    %     各点から地図の最近傍点までの距離の二乗の平均 [m^2]（PCL の getFitnessScore と同じ定義．点群の前処理も pcl_localization と同じ）
     %   Plant（Matching，sensor(5)）：後輪間中心の姿勢（周期ごと．最新の /tf map → base（ekf_localizer の一番新しい刻み．今より 20〜40 ms 先の予測）．
     %     2026-11-19〜11-26 の記録は今の ROS の時刻の TF（引けなければ最新），2026-11-13 までは最新の TF）．
     %     2026-10-26 の 62 より前の記録は /ekf_pose（LiDAR の姿勢），68 より前は /localization/base_pose
@@ -22,6 +27,9 @@ function  myplotResult(DATAdir,cfg)
 
         % File  = strcat(DATAdir, '/info.mat');
         % load(File, 'cfg');
+    end
+    if nargin < 3
+        MAPfile = "";
     end
 
     File  = strcat(DATAdir, '/userLocal_tmp.mat');
@@ -96,8 +104,42 @@ function  myplotResult(DATAdir,cfg)
         plotWithAverage(Tn, ndt.matching_time, 'Matching time', 'Matching Time [s]');
         saveFigure('ndt_matching_time', Outputdir)
 
-        plotWithAverage(Tn, ndt.angle_diff, 'Angle diff', 'Angle diff [deg]');
+        plotWithAverage(Tn, ndt.angle_diff, 'Rotation magnitude difference', 'Rotation magnitude difference [deg]');
         saveFigure('ndt_angle_diff', Outputdir)
+    end
+
+    % フィットネススコア（地図を渡したときだけ）
+    if isempty(MAPfile) || strlength(string(MAPfile)) == 0
+        fprintf('myplotResult: no map, fitness score skipped\n');
+    elseif ~isfile(MAPfile)
+        warning('myplotResult: map not found: %s (fitness score skipped)', MAPfile);
+    elseif isempty(lp)
+        fprintf('myplotResult: no pair of point cloud and LIDAR_pose, fitness score skipped\n');
+    else
+        fit = fitnessScore(raw(isNewPair), lp, MAPfile);
+        % 点群の stamp の TF が引けず最新の TF を使った組（LIDAR_pose.Stamp が点群の stamp と違う）
+        if isfield(lp, 'Stamp')
+            stale = abs([lp.Stamp]' - stampL) > 1e-6;
+        else
+            stale = false(size(fit));
+        end
+        ok = ~isnan(fit);
+        av = mean(fit(ok));
+        fprintf('myplotResult: fitness score mean %.4g m^2 (%d pairs, latest TF used in %d)\n', av, nnz(ok), nnz(stale & ok));
+        C = palette();
+        newFigure();
+        plot(Tl(ok), fit(ok), '-', 'Color', C(1,:), 'LineWidth', 2.0);
+        plot(Tl([1,end]), [av, av], '-', 'Color', C(2,:), 'LineWidth', 1.2);
+        names = {'Fitness score', sprintf('Average %.3g', av)};
+        if any(stale & ok)
+            plot(Tl(stale & ok), fit(stale & ok), 'o', 'Color', C(3,:), 'MarkerFaceColor', C(3,:), 'MarkerSize', 3);
+            names{end+1} = 'Latest TF used';   % 点群の stamp の TF が引けなかった組
+        end
+        xlabel('Time [s]')
+        ylabel('Fitness score [m^2]', 'Interpreter', 'tex')
+        timeLim(Tl)
+        legend(names, 'Location', 'best')
+        saveFigure('fitness_score', Outputdir)
     end
 
     plotPosition(Tp, state, plantName);
@@ -160,6 +202,33 @@ function t = cloudStamp(r)
     t = NaN;
     if isfield(r,'LIDAR') && ~isempty(r.LIDAR)
         t = double(r.LIDAR.header.stamp.sec) + double(r.LIDAR.header.stamp.nanosec)*1e-9;
+    end
+end
+
+function f = fitnessScore(raw, lp, MAPfile)
+    % 点群を LiDAR の姿勢 lp で地図に重ねたときの，各点から地図の最近傍点までの距離の二乗の平均 [m^2]（組ごと．点が無ければ NaN）．
+    % PCL の Registration::getFitnessScore（距離の上限なし）と同じ．点群の前処理は pcl_localization と同じ：0.1 m のボクセルで間引き
+    % （pcdownsample の gridAverage），LiDAR からの水平距離 0.1〜100 m の点だけ．地図は間引かない（NDT にも間引かずに渡している）
+    leaf = 0.1;
+    rangeLim = [0.1 100];
+    map = pcread(MAPfile);
+    mapPt = double(map.Location);
+    mapPt = mapPt(all(isfinite(mapPt),2), :);
+    tree = KDTreeSearcher(mapPt);
+    f = NaN(numel(lp),1);
+    for k = 1:numel(lp)
+        xyz = rosReadXYZ(raw{k}.LIDAR);
+        xyz = double(xyz(all(isfinite(xyz),2), :));
+        if isempty(xyz), continue; end
+        pc = pcdownsample(pointCloud(xyz), 'gridAverage', leaf);
+        xyz = double(pc.Location);
+        r = hypot(xyz(:,1), xyz(:,2));
+        xyz = xyz(r > rangeLim(1) & r < rangeLim(2), :);
+        if isempty(xyz), continue; end
+        R = eul2rotm([lp(k).Yaw, lp(k).Pitch, lp(k).Roll], 'ZYX');
+        pts = xyz*R.' + [lp(k).X, lp(k).Y, lp(k).Z];
+        [~, d] = knnsearch(tree, pts);
+        f(k) = mean(d.^2);
     end
 end
 

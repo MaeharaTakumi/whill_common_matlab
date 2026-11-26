@@ -67,10 +67,8 @@ function myplotPointCloudVideo(DATAdir, MAPfile)
         return
     end
     if hasLidarPose
-        trajName = 'Trajectory (vehicle center)';
         poseName = 'Heading';
     else
-        trajName = 'Trajectory';
         poseName = 'Pose';
     end
 
@@ -114,7 +112,8 @@ function myplotPointCloudVideo(DATAdir, MAPfile)
     time     = text(ax, 0.02, 0.96, '', 'Units', 'normalized', 'FontSize', 20, 'Interpreter', 'Latex', ...
                     'BackgroundColor', [1 1 1], 'EdgeColor', [0 0 0], 'VerticalAlignment', 'top');
     handles = [p_map, p_scan, p_traj, p_center, p_robot, p_lidar];
-    names = {'Map', 'Scan', trajName, 'Vehicle center (rear axle)', poseName, 'LiDAR (scan stamp)'};
+    % 凡例はカッコの補足を付けない（軌跡は車両中心，LiDAR は点群の stamp の姿勢）
+    names = {'Map', 'Scan', 'Trajectory', 'Vehicle center', poseName, 'LiDAR'};
     show = [~isempty(mapPt), true, true, hasLidarPose, true, hasLidarPose];
     legend(ax, handles(show), names(show), 'Location', 'northeast', 'FontSize', 14);
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

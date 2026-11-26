@@ -43,7 +43,7 @@ mySaveFileName = string(datetime("now","Format","yyyyMMdd_HHmmss"));
 Datadir = strcat(mySavePath,filesep,string(datetime("now","Format","yyyyMMdd")),filesep,mySaveFileName);
 if ~exist(Datadir,"dir"), mkdir(Datadir); end
 
-% Point cloud video after the run (plotter.myplotPointCloudVideo). Empty mapFile: scans only
+% Map for the point cloud video (plotter.myplotPointCloudVideo) and the fitness score (plotter.myplotResult). Empty mapFile: scans only, no fitness score
 makeVideo = true;
 mapFile = "/home/student/Documents/Research/Docker/localization/docker/data/map/SC10_4_0.05.pcd"; % Gazebo map
 
@@ -89,5 +89,5 @@ sys.run();
 
 %% Plot
 plotter.DataPlotter(Datadir,cfg)
-plotter.myplotResult(Datadir,cfg)
+plotter.myplotResult(Datadir,cfg,mapFile)
 if makeVideo, plotter.myplotPointCloudVideo(Datadir,mapFile); end
