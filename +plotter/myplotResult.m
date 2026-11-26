@@ -105,7 +105,7 @@ function  myplotResult(DATAdir,cfg,MAPfile)
         plotWithAverage(Tn, ndt.matching_time, 'Matching time', 'Matching Time [s]');
         saveFigure('ndt_matching_time', Outputdir)
 
-        plotWithAverage(Tn, ndt.angle_diff, 'Rotation magnitude difference', 'Rotation magnitude difference [deg]');
+        plotWithAverage(Tn, ndt.angle_diff, 'Rotation magnitude difference', 'Angle [deg]');
         saveFigure('ndt_angle_diff', Outputdir)
 
         % NDT が送ったフィットネススコア（NDT の解での値．地図は要らない）
@@ -175,7 +175,7 @@ function  myplotResult(DATAdir,cfg,MAPfile)
         newFigure();
         plot(Tl(2:end), diff(stampL)*1e3, '-', 'Color', C(2,:), 'LineWidth', 1.6);
         xlabel('Time [s]')
-        ylabel('Interval between new LiDAR pairs [ms]')
+        ylabel('New pair interval [ms]')   % 新しい組（点群と LiDAR の姿勢）の点群の stamp の差
         timeLim(T)
         saveFigure('LiDAR_pair_interval', Outputdir)
     end
@@ -194,7 +194,7 @@ function  myplotResult(DATAdir,cfg,MAPfile)
         plot(Ta, age, '-', 'Color', C(1,:), 'LineWidth', 1.6);
         plot(Ta(isNew), age(isNew), 'o', 'Color', C(2,:), 'MarkerFaceColor', C(2,:), 'MarkerSize', 3);
         xlabel('Time [s]')
-        ylabel('Plant TF stamp - point cloud stamp [ms]')
+        ylabel('Point cloud age [ms]')   % Plant の TF の stamp − 点群の stamp
         timeLim(T)
         legend(sprintf('Every cycle (mean %.0f ms)', mean(age)), ...
             sprintf('New point cloud received (mean %.0f ms)', mean(age(isNew))), 'Location', 'best')
